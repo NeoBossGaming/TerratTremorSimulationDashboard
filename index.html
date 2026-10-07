@@ -2408,7 +2408,9 @@ const Playground = (() => {
         failed = true;
       } else {
         const tCheck = T5 + P.collectS;
-        const heldSet = trig.filter((tr) => Math.hypot(tr.n.x - decider.x, tr.n.y - decider.y) <= P.holdRadiusKm && tr.t + share(tr.n, decider) <= tCheck).slice(0, 120);
+        const near = trig.filter((tr) => Math.hypot(tr.n.x - decider.x, tr.n.y - decider.y) <= P.holdRadiusKm && tr.t + share(tr.n, decider) <= tCheck);
+        // at most 120 for speed, sampled evenly (the earliest ones alone would bias the size estimate)
+        const heldSet = near.length <= 120 ? near : Array.from({ length: 120 }, (_, i) => near[Math.floor((i * near.length) / 120)]);
         let tested = 0;
         const gx = Math.round(decider.x), gy = Math.round(decider.y);
         const res = new Float64Array(heldSet.length);

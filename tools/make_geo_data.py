@@ -12,14 +12,15 @@ Usage:
   python3 tools/make_geo_data.py <world-atlas/package> <indonesia-geodata/package> [index.html]
 
 Rings are simplified (Douglas-Peucker), quantised to 0.001 deg, delta + zigzag + varint
-encoded and stored as base64 (about 80 KB in total).
+encoded and stored as base64. Provincial borders are the edges two provinces share, stored as
+open polylines ('pb'), so coastlines are never drawn twice.
 """
 import base64, json, math, os, re, sys
 
 WA, IDG = sys.argv[1], sys.argv[2]
 TARGET = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(__file__), '..', 'index.html')
 BOX = (82.0, 154.0, -22.0, 18.0)   # the dashboard paints 84-152 E, 20 S-16 N (detail inside 94-142 E, 11.5 S-6.5 N)
-Q, TOL_COAST, TOL_PROV = 1000, 0.006, 0.015
+Q, TOL_IDN, TOL_OTHER, TOL_PROV = 1000, 0.003, 0.005, 0.008
 
 def rdp(pts, eps):
     if len(pts) < 4: return pts
@@ -94,26 +95,53 @@ for g in topo['objects']['countries']['geometries']:
         if not inbox(r): continue
         r = clip(r, BOX)
         if len(r) < 4 or area(r) < 0.0012: continue
-        s = rdp(r, TOL_COAST)
-        if len(s) >= 4: (idn if g.get('id') == '360' else oth).append(s)
+        mine = g.get('id') == '360'
+        s = rdp(r, TOL_IDN if mine else TOL_OTHER)
+        if len(s) >= 4: (idn if mine else oth).append(s)
 
 prov = json.load(open(os.path.join(IDG, 'json', 'indonesiaHigh.json')))
-prings, names = [], []
+# provincial borders: only the edges two provinces share (coasts are drawn from Natural Earth),
+# chained into polylines and simplified
+from collections import Counter, defaultdict
+key = lambda p: (round(p[0], 5), round(p[1], 5))
+seg = Counter()
+names = []
 for f in prov['features']:
     g = f['geometry']; polys = g['coordinates'] if g['type'] == 'MultiPolygon' else [g['coordinates']]
-    best, lab, n = 0, None, 0
+    best, lab = 0, None
     for poly in polys:
         r = [tuple(p) for p in poly[0]]; a = area(r)
         if a > best: best, lab = a, (sum(p[0] for p in r) / len(r), sum(p[1] for p in r) / len(r))
-        if a < 0.004: continue
-        s = rdp(r, TOL_PROV)
-        if len(s) >= 4: prings.append(s); n += 1
-    names.append([f['properties']['NAME_ENG'], round(lab[0], 2), round(lab[1], 2), n])
+        for ring_ in poly:
+            q = [key(p) for p in ring_]
+            for u, v in zip(q, q[1:]):
+                if u != v: seg[(u, v) if u < v else (v, u)] += 1
+    names.append([f['properties']['NAME_ENG'], round(lab[0], 2), round(lab[1], 2)])
+adj = defaultdict(list)
+for (u, v), n in seg.items():
+    if n >= 2: adj[u].append(v); adj[v].append(u)
+used, lines = set(), []
+def walk(a, b):
+    line = [a, b]; used.add((a, b) if a < b else (b, a))
+    while len(adj[b]) == 2:
+        c = adj[b][0] if adj[b][1] == a else adj[b][1]
+        e = (b, c) if b < c else (c, b)
+        if e in used: break
+        used.add(e); line.append(c); a, b = b, c
+    return line
+for u in list(adj):
+    if len(adj[u]) != 2:
+        for v in adj[u]:
+            if ((u, v) if u < v else (v, u)) not in used: lines.append(walk(u, v))
+for u in list(adj):                              # closed loops (an inland province)
+    for v in adj[u]:
+        if ((u, v) if u < v else (v, u)) not in used: lines.append(walk(u, v))
+plines = [s_ for s_ in (rdp(l, TOL_PROV) for l in lines) if len(s_) >= 2]
 
-data = {'q': Q, 'idn': pack(idn), 'oth': pack(oth), 'prov': pack(prings), 'names': names}
+data = {'q': Q, 'idn': pack(idn), 'oth': pack(oth), 'pb': pack(plines), 'names': names}
 block = '/*<GEO-DATA>*/\nconst GEO_DATA = ' + json.dumps(data, separators=(',', ':'), ensure_ascii=False) + ';\n/*</GEO-DATA>*/'
 html = open(TARGET, encoding='utf-8').read()
 pat = re.compile(r'/\*<GEO-DATA>\*/.*?/\*</GEO-DATA>\*/', re.S)
 if not pat.search(html): sys.exit('GEO-DATA markers not found in ' + TARGET)
 open(TARGET, 'w', encoding='utf-8').write(pat.sub(lambda m: block, html))
-print(f'GEO_DATA: {len(idn)} Indonesian + {len(oth)} other land rings, {len(prings)} province rings, {len(block) / 1024:.0f} KB')
+print(f'GEO_DATA: {len(idn)} Indonesian + {len(oth)} other land rings, {len(plines)} province border lines, {len(block) / 1024:.0f} KB')

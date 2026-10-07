@@ -19,6 +19,27 @@ The page opens on a map of Indonesia.
 While an earthquake runs, the five-step bar appears at the top and a small card on the right
 shows the nodes triggered, the estimated size, the alert time and the warning time per city.
 
+### What each step shows
+
+Each step pauses the clock, opens a card with a small chart, and shows the same thing on the
+map with a few sample nodes (not every node, so it stays readable):
+
+1. **Trigger**: a schematic trace crossing the 4× threshold; on the map, the first node radios
+   its trigger to the nodes around it (dashed links and moving packets).
+2. **Timing**: the triggers are sent to one deciding node, which tries guesses for where and
+   when one quake began. For each guess, sticks on about 40 nodes show how much earlier (down)
+   or later (up) each node triggered than that guess predicts, green within ±0.3 s and red
+   outside; the chart plots the same mismatch for up to 90 nodes. The wrong guesses are picked
+   so that each is clearly worse than the next, and at the best guess the sticks flatten.
+   Coloured rings show the arrival times each guess predicts, in the same colours as the
+   nodes' real trigger times.
+3. **Magnitude**: each sample node sends how hard it shook (amber bars, tallest near the
+   source); the card shows the size that explains the shaking best.
+4. **Neighbours**: the deciding node asks the nodes within the neighbour radius whether they
+   shook (green answers; dashed rings for nodes that stayed quiet).
+5. **Alert**: the ALERT is relayed node to node outwards from the deciding node (blue links),
+   then the camera zooms out to follow it.
+
 | Key | Action |
 | --- | --- |
 | Space | play / pause (with nothing running: plays the current scenario) |
@@ -56,7 +77,9 @@ ALERT's reach curve from the data, up to the distance the data covers (dashed ci
 
 A detailed 200 m patch (8 km radius) around the epicentre runs the same five checks as the
 scenarios. The ALERT then floods only over connected land, because the radio mesh cannot
-cross open sea. After the last city has been hit, the rest plays at 4× speed (the clock says
+cross open sea, and only up to 200 km from the epicentre (`PLAYGROUND.alertRangeKm`; the
+virtual cities sit within 100 km). After the alert the camera frames about that area, not the
+whole island. After the last city has been hit, the rest plays at 4× speed (the clock says
 so).
 
 The playground uses the same toy physics as `tools/make_placeholder_events.mjs`. It is a
@@ -69,6 +92,11 @@ the zoom level (5° on the overview, down to 0.01° on the sensor patch), its va
 labelled along the top and left edges, and the bottom-right corner shows the coordinates
 under the cursor. Neighbouring countries are drawn too, at lower detail, so the coasts
 continue past the edge of the detailed map.
+
+The coastlines stay sharp at every zoom: land is stored as a coverage mask and the edge is
+re-sharpened per pixel, so zooming in to a few kilometres shows a clean coast instead of a
+blurred texture. Provincial borders are drawn as thin dashed lines from the embedded
+`GEO_DATA` (regenerate with `tools/make_geo_data.py`).
 
 ## Data
 

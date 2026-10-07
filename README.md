@@ -1,43 +1,63 @@
 # TerraTremor · early-warning demo dashboard
 
 `index.html` is the whole dashboard: one self-contained file (vanilla JS + Three.js r128)
-for a 75-second live demo on a 16:9 projector. Open it in Chrome or Edge and press **F**.
+for a live demo on a 16:9 projector. Open it in Chrome or Edge and press **F**.
+
+## How it works on screen
+
+The page opens on a map of Indonesia.
+
+* **Click anywhere on the map**: an earthquake starts there (live toy model) and you watch the
+  node network detect it in real time. Magnitude and depth for the next click are set in the
+  bottom bar.
+* **Click a pin**: it plays that prepared scenario (the six events in `EVENTS`). The camera
+  flies in and the scenario starts on its own.
+* One earthquake at a time: while one is running, map and pin clicks are ignored. Wait until it
+  finishes, or press **R** to go back to the map.
+
+While an earthquake runs, the five-step bar appears at the top and a small card on the right
+shows the nodes triggered, the estimated size, the alert time and the warning time per city.
 
 | Key | Action |
 | --- | --- |
-| Space | run / pause (the big RUN button does the same) |
-| → or PageDown | next phase (works with presentation clickers) |
-| ← or PageUp | previous phase |
-| 1 to 5 | jump to a phase |
-| ↑ / ↓ | previous / next event |
-| R | reset the run and the camera |
+| Space | play / pause (with nothing running: plays the current scenario) |
+| → or PageDown | next step (works with presentation clickers) |
+| ← or PageUp | previous step |
+| 1 to 5 | jump to a step |
+| ↑ / ↓ | play the previous / next scenario |
+| R | reset to the map |
 | F | fullscreen |
 | M | sound on / off (starts muted) |
-| + / − | speed 0.25× to 4× |
-| O | Indonesia overview (map with a latitude / longitude grid) |
+| + / − | speed 0.25× to 4× (or the speed button) |
+| O | Indonesia overview |
+| T | light / dark theme |
 
 Mouse: drag to orbit, right-drag (or Shift+drag) to pan, wheel to zoom towards the cursor.
-**R** or the "Auto camera" chip returns to the choreographed camera.
+The "Auto camera" chip returns to the choreographed camera.
 
-## Playground (live toy model)
+## Theme
 
-Choose the last card, **Playground**, pick a magnitude and depth, then click anywhere on the
-map. An earthquake starts there and runs in real time: the national node field (one dot per
-~5 km cell of the hypothetical 200 m network, about 78,000 dots, drawn entirely on the GPU)
-lights up amber where nodes trigger, cyan where the ALERT arrives, and red where the S wave
-arrives first (no warning). The ALERT floods only over connected land, because the radio mesh
-cannot cross open sea. A detailed 0.5 km patch around the epicentre runs the same five checks as
-the scenarios. Only one earthquake at a time: the map is locked until it finishes (or press **R**).
+The default is a light "atlas" look. `THEME` at the top of the script sets the start theme
+(`'light'` or `'dark'`); **T** switches at any time.
+
+## Live playground (toy model)
+
+The national node field (one dot per ~5 km cell of the hypothetical 200 m network, about
+78,000 dots, drawn entirely on the GPU) lights up amber where nodes trigger, blue where the
+ALERT arrives, and red where the S wave arrives first (no warning). The ALERT floods only over
+connected land, because the radio mesh cannot cross open sea. A detailed 0.5 km patch around
+the epicentre runs the same five checks as the scenarios.
 
 The playground uses the same toy physics as `tools/make_placeholder_events.mjs`. It is a
 teaching toy, not the real simulation, and it is labelled LIVE TOY MODEL on screen.
 
 ## Map
 
-Map mode: zoom out (or press **O**) to see all of Indonesia. A latitude / longitude grid
-adapts to the zoom level (5° on the overview, down to 0.01° on the sensor patch), its
-values are labelled along the top and left edges of the map, the bottom-right corner shows
-the coordinates under the cursor, and every scenario appears as a pin you can click.
+Zoom out (or press **O**) to see all of Indonesia. A latitude / longitude grid adapts to
+the zoom level (5° on the overview, down to 0.01° on the sensor patch), its values are
+labelled along the top and left edges, and the bottom-right corner shows the coordinates
+under the cursor. Neighbouring countries are drawn too, at lower detail, so the coasts
+continue past the edge of the detailed map.
 
 ## Data
 
@@ -61,7 +81,7 @@ regenerates the block in `index.html`.
 The page loads Three.js from cdnjs (with jsDelivr as a fallback) and two Google Fonts.
 For a venue without internet, paste the content of
 `https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js` into the page in place of
-its `<script src>` tag. The comment at the top of `index.html` has the exact steps. Without
+its two `<script>` tags in `<head>`. The comment at the top of `index.html` has the exact steps. Without
 the fonts, the page falls back to system fonts.
 
 The map is drawn from embedded geometry: Natural Earth 1:10m coastlines and neighbouring

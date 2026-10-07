@@ -18,7 +18,7 @@ import base64, json, math, os, re, sys
 
 WA, IDG = sys.argv[1], sys.argv[2]
 TARGET = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(__file__), '..', 'index.html')
-BOX = (93.0, 143.0, -12.5, 7.5)
+BOX = (82.0, 154.0, -22.0, 18.0)   # the dashboard paints 84-152 E, 20 S-16 N (detail inside 94-142 E, 11.5 S-6.5 N)
 Q, TOL_COAST, TOL_PROV = 1000, 0.006, 0.015
 
 def rdp(pts, eps):
@@ -40,7 +40,26 @@ def rdp(pts, eps):
 def area(r): return abs(sum(r[i][0] * r[i - 1][1] - r[i - 1][0] * r[i][1] for i in range(len(r)))) / 2
 def inbox(r):
     xs = [p[0] for p in r]; ys = [p[1] for p in r]
+    if max(xs) - min(xs) > 180: return False   # wraps the 180th meridian (Fiji): far away anyway
     return max(xs) >= BOX[0] and min(xs) <= BOX[1] and max(ys) >= BOX[2] and min(ys) <= BOX[3]
+def clip(r, box):
+    # Sutherland-Hodgman against the box, so large neighbours (Australia, India) stay small
+    x0, x1, y0, y1 = box
+    def cut(pts, inside, inter):
+        out = []
+        for i in range(len(pts)):
+            a, b = pts[i - 1], pts[i]
+            if inside(b):
+                if not inside(a): out.append(inter(a, b))
+                out.append(b)
+            elif inside(a): out.append(inter(a, b))
+        return out
+    ix = lambda xc: (lambda a, b: (xc, a[1] + (b[1] - a[1]) * (xc - a[0]) / (b[0] - a[0])))
+    iy = lambda yc: (lambda a, b: (a[0] + (b[0] - a[0]) * (yc - a[1]) / (b[1] - a[1]), yc))
+    for inside, inter in ((lambda p: p[0] >= x0, ix(x0)), (lambda p: p[0] <= x1, ix(x1)), (lambda p: p[1] >= y0, iy(y0)), (lambda p: p[1] <= y1, iy(y1))):
+        if not r: break
+        r = cut(r, inside, inter)
+    return r
 def zz(v): return (v << 1) ^ (v >> 63)
 def pack(rings):
     b = bytearray()
@@ -72,7 +91,9 @@ for g in topo['objects']['countries']['geometries']:
     polys = g['arcs'] if g['type'] == 'MultiPolygon' else [g['arcs']] if g['type'] == 'Polygon' else []
     for poly in polys:
         r = ring(poly[0])
-        if not inbox(r) or area(r) < 0.0012: continue
+        if not inbox(r): continue
+        r = clip(r, BOX)
+        if len(r) < 4 or area(r) < 0.0012: continue
         s = rdp(r, TOL_COAST)
         if len(s) >= 4: (idn if g.get('id') == '360' else oth).append(s)
 

@@ -15,7 +15,9 @@
         Left / PageUp  previous phase 1-5  jump to phase
         Up / Down  previous / next event
         R  reset    F  fullscreen    M  mute (audio starts muted)    + / -  speed
- MOUSE  drag = orbit, right-drag (or Shift+drag) = pan, wheel = zoom.
+        O  Indonesia overview (map with latitude / longitude grid)
+ MOUSE  drag = orbit, right-drag (or Shift+drag) = pan, wheel = zoom towards
+        the cursor. The bottom-right corner shows the coordinates under the cursor.
         "R" or the "Auto camera" chip returns to the choreographed camera.
 
  DATA   Every number on screen comes from the EVENTS array at the very bottom of
@@ -228,11 +230,20 @@ ol,ul{list-style:none}
 #clock-tag{font-size:18px;color:var(--ink-3);white-space:nowrap}
 #clock-tag.slow{color:var(--amber)} #clock-tag.frozen{color:var(--orange)}
 
-#cam-chip{right:470px;bottom:132px;pointer-events:auto;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:10px;font-size:18px;color:var(--ink-2);background:rgba(12,17,29,.72);border:1px solid var(--line)}
+#cam-chip{right:470px;bottom:132px;z-index:2;pointer-events:auto;display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:10px;font-size:18px;color:var(--ink-2);background:rgba(12,17,29,.72);border:1px solid var(--line)}
 #cam-chip b{color:var(--orange);font-weight:600}
 #cam-chip[hidden]{display:none}
 
 #footer{left:34px;bottom:12px;font-size:18px;color:var(--ink-3);white-space:nowrap}
+#coords{right:32px;bottom:12px;font-size:18px;color:var(--ink-2);white-space:nowrap}
+#coords span{color:var(--ink-3);font-family:var(--ui);margin-right:.6em}
+.grat{position:absolute;left:0;top:0;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:18px;color:rgba(178,197,226,.82);text-shadow:0 1px 3px #000,0 0 12px rgba(0,0,0,.9);white-space:nowrap;will-change:transform;transition:opacity .3s}
+.grat.lon{transform-origin:50% 0}
+.lbl.pin .lbl-in{pointer-events:auto;cursor:pointer;transition:background .3s,border-color .3s}
+.lbl.pin .lbl-in:hover{background:rgba(255,159,67,.18);border-color:rgba(255,159,67,.7)}
+.lbl.pin.off .lbl-in{pointer-events:none}
+.lbl.pin::after{content:"";position:absolute;left:-5px;top:-5px;width:10px;height:10px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+.lbl.pin.sel .lbl-in{border-color:rgba(255,159,67,.75);background:rgba(255,159,67,.14)}
 #footer .sep{padding:0 .6em;opacity:.6}
 #footer b{color:var(--ink-2);font-weight:500}
 
@@ -340,6 +351,9 @@ ol,ul{list-style:none}
       <div class="tl-head" id="tl-head"></div>
     </div>
     <div id="clock"><span id="clock-t" class="mono">t = 0.00 s</span><span id="clock-tag">ready</span></div>
+    <button id="btn-map" class="icon-btn" type="button" aria-label="Indonesia overview (O)" title="Indonesia overview (O)">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+    </button>
     <button id="btn-reset" class="icon-btn" type="button" aria-label="Reset (R)" title="Reset (R)">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/></svg>
     </button>
@@ -358,6 +372,7 @@ ol,ul{list-style:none}
 
   <button id="cam-chip" type="button" hidden>Manual camera · <b>Auto camera</b></button>
 
+  <div id="coords" class="mono" aria-hidden="true"></div>
   <footer id="footer">Simulation. Hypothetical network, 200 m node spacing. Radio collisions not simulated.<span class="sep">·</span>Data: <b class="mono" id="data-id">–</b></footer>
 </div>
 
@@ -734,6 +749,7 @@ const Layout = {
     const ny = (py) => 1 - ((this.oy + py * this.s) / this.H) * 2;
     return { x0: nx(x0), x1: nx(x1), y0: ny(y1), y1: ny(y0) };
   },
+  stageToNdc(sx, sy) { return [((this.ox + sx * this.s) / this.W) * 2 - 1, 1 - ((this.oy + sy * this.s) / this.H) * 2]; },
   toStage(ndcX, ndcY) {
     const px = ((ndcX + 1) / 2) * this.W, py = ((1 - ndcY) / 2) * this.H;
     return [(px - this.ox) / this.s, (py - this.oy) / this.s];
@@ -965,7 +981,7 @@ void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position
 const GROUND_FS = `
 uniform sampler2D uMap; uniform sampler2D uMask; uniform sampler2D uNoise;
 uniform vec4 uBounds; uniform float uHasMask;
-uniform vec2 uNoiseOrigin; uniform vec2 uEvent; uniform float uGridVis;
+uniform vec2 uNoiseOrigin; uniform vec4 uGeo; uniform vec3 uGrat; uniform float uGratVis;
 uniform vec3 uFogCol; uniform vec3 uSeaCol; uniform float uFogNear, uFogFar; uniform float uDetail;
 varying vec3 vW;
 void main(){
@@ -973,14 +989,16 @@ void main(){
   vec2 uvc = clamp(uv, 0.0, 1.0);
   vec3 col = texture2D(uMap, vec2(uvc.x, 1.0 - uvc.y)).rgb;
   vec2 out2 = max(-uv, uv - 1.0);
-  float outside = smoothstep(0.0, 0.015, max(out2.x, out2.y));
+  float outside = smoothstep(-0.01, 0.06, max(out2.x, out2.y));
   col = mix(col, uSeaCol, outside);
   float pxw = max(fwidth(vW.x), fwidth(vW.z));
   float zoomIn = 1.0 - smoothstep(0.4, 2.0, pxw);
   float lum0 = dot(col, vec3(0.299, 0.587, 0.114));
   col *= 1.0 - 0.55 * zoomIn * smoothstep(0.16, 0.5, lum0);
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
-  float land = (uHasMask > 0.5 ? texture2D(uMask, vec2(uvc.x, 1.0 - uvc.y)).r : smoothstep(0.05, 0.2, lum)) * (1.0 - outside);
+  vec2 mk = uHasMask > 0.5 ? texture2D(uMask, vec2(uvc.x, 1.0 - uvc.y)).rg : vec2(smoothstep(0.05, 0.2, lum), 0.0);
+  float land = mk.x * (1.0 - outside);
+  float mapLabel = mk.y * (1.0 - outside) * smoothstep(0.7, 2.2, pxw);
   vec2 q = vW.xz - uNoiseOrigin;
   vec2 fw = fwidth(vW.xz);
   float px = max(fw.x, fw.y);
@@ -994,12 +1012,15 @@ void main(){
   vec2 g = (n1.gb - 0.5) * 0.55 * f1 + (n2.gb - 0.5) * 0.4 * f2 + (n3.gb - 0.5) * 0.3 * f3 + (n4.gb - 0.5) * 0.22 * f4;
   float shade = clamp(1.0 + dot(g, vec2(-0.62, -0.78)) * 1.1, 0.78, 1.22);
   col *= mix(1.0 + h * 0.12, (1.0 + h * 0.45) * shade, land * uDetail);
-  // fine 1 km grid near the event (patch scale only)
-  vec2 lq = vW.xz - uEvent;
-  vec2 gq = abs(fract(lq - 0.5) - 0.5);
-  vec2 fq = fwidth(lq);
-  float gl = max(1.0 - smoothstep(0.0, fq.x * 1.3, gq.x), 1.0 - smoothstep(0.0, fq.y * 1.3, gq.y));
-  col += vec3(0.42, 0.52, 0.68) * gl * 0.075 * uGridVis * (1.0 - smoothstep(8.0, 22.0, length(lq)));
+  // latitude / longitude graticule; spacing adapts to the zoom (major + fading minor lines)
+  float lonR = uGeo.x + vW.x / uGeo.z, latR = uGeo.y - vW.z / uGeo.w;   // degrees from 110E / 10S
+  vec2 fwg = vec2(fwidth(lonR), fwidth(latR));
+  vec2 dM = abs(fract(vec2(lonR, latR) / uGrat.x - 0.5) - 0.5) * uGrat.x;
+  vec2 dm = abs(fract(vec2(lonR, latR) / uGrat.y - 0.5) - 0.5) * uGrat.y;
+  float gM = max(1.0 - smoothstep(0.0, fwg.x * 1.25, dM.x), 1.0 - smoothstep(0.0, fwg.y * 1.25, dM.y));
+  float gm = max(1.0 - smoothstep(0.0, fwg.x * 1.1, dm.x), 1.0 - smoothstep(0.0, fwg.y * 1.1, dm.y));
+  col += vec3(0.5, 0.63, 0.82) * (gM * 0.17 + gm * 0.17 * uGrat.z) * uGratVis;
+  col = mix(col, vec3(0.62, 0.69, 0.8), mapLabel * 0.32);
   float f = smoothstep(uFogNear, uFogFar, length(vW - cameraPosition));
   gl_FragColor = vec4(mix(col, uFogCol, f), 1.0);
 }`;
@@ -1045,6 +1066,12 @@ void main(){
 
 // ---------- instanced layers ----------
 const STYLE = { DOT: 0, RING: 1, DASH: 2, CROSS: 3, DISC: 4 };
+const GRAT_STEPS = [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];
+// geographic helpers for coordinate read-outs
+function worldToGeo(x, z) { return { lon: GEO.lon0 + x / GEO.kx, lat: GEO.lat0 - z / GEO.ky }; }
+function fmtLat(v, d) { const a = Math.abs(v).toFixed(d); return +a === 0 ? `${a}°` : `${a}° ${v < 0 ? 'S' : 'N'}`; }
+function fmtLon(v, d) { return `${Math.abs(v).toFixed(d)}° ${v < 0 ? 'W' : 'E'}`; }
+function stepDecimals(step) { return Math.max(0, Math.ceil(-Math.log10(step) - 1e-9)); }
 
 class DecalLayer {
   constructor(capacity, order, shared) {
@@ -1243,6 +1270,20 @@ const Scene = (() => {
   for (const k of Object.keys(COLORS)) C[k] = hex3(COLORS[k]);
   const v3 = new THREE.Vector3();
   let pxScale = 1;
+  let gratStep = 5, gratVis = 1;
+  const raycaster = new THREE.Raycaster(), groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), ndcV = new THREE.Vector2(), hitV = new THREE.Vector3();
+  function groundAtNdc(x, y) {
+    ndcV.set(x, y); raycaster.setFromCamera(ndcV, camera);
+    const p = raycaster.ray.intersectPlane(groundPlane, hitV);
+    return p ? { x: p.x, z: p.z } : null;
+  }
+  function groundAtClient(cx, cy) { return groundAtNdc((cx / window.innerWidth) * 2 - 1, 1 - (cy / window.innerHeight) * 2); }
+  // fly the camera to a named shot but stay in manual mode (used by the overview button)
+  function flyTo(key, ev) { rig.manual = true; rig.goTo(shotPose(key, ev), shotDuration('patch', key) || 2.4, 'manual-' + key); }
+  function clampTarget() {
+    const a = GEO.toWorld(MAP_BOUNDS.west - 6, MAP_BOUNDS.north + 6), b = GEO.toWorld(MAP_BOUNDS.east + 6, MAP_BOUNDS.south - 6);
+    rig.cur.x = clamp(rig.cur.x, a.x, b.x); rig.cur.z = clamp(rig.cur.z, a.z, b.z);
+  }
 
   function init(cv) {
     canvas = cv;
@@ -1300,8 +1341,9 @@ const Scene = (() => {
       uniforms: {
         uMap: { value: mapTex }, uMask: { value: maskTex }, uNoise: { value: makeNoiseTexture() }, uHasMask: { value: 1 },
         uBounds: { value: new THREE.Vector4(b0.x, b0.z, b1.x, b1.z) },
-        uNoiseOrigin: { value: new THREE.Vector2() }, uEvent: { value: new THREE.Vector2() }, uGridVis: { value: 0 },
-        uFogCol: { value: new THREE.Color(COLORS.bg) }, uSeaCol: { value: new THREE.Color('#070b14') }, uFogNear: shared.uFogNear, uFogFar: shared.uFogFar, uDetail: { value: 1 },
+        uNoiseOrigin: { value: new THREE.Vector2() },
+        uGeo: { value: new THREE.Vector4(GEO.lon0 - 110, GEO.lat0 + 10, GEO.kx, GEO.ky) }, uGrat: { value: new THREE.Vector3(5, 1, 0) }, uGratVis: { value: 1 },
+        uFogCol: { value: new THREE.Color(COLORS.bg) }, uSeaCol: { value: new THREE.Color('#0a111e') }, uFogNear: shared.uFogNear, uFogFar: shared.uFogFar, uDetail: { value: 1 },
       },
       vertexShader: GROUND_VS, fragmentShader: GROUND_FS, extensions: { derivatives: true },
     });
@@ -1472,7 +1514,6 @@ const Scene = (() => {
     }
     fx = f;
     scene.add(g);
-    groundMat.uniforms.uEvent.value.set(ev.origin.x, ev.origin.z);
     groundMat.uniforms.uNoiseOrigin.value.set(Math.round(ev.origin.x / 230) * 230, Math.round(ev.origin.z / 230) * 230);
   }
 
@@ -1593,7 +1634,17 @@ const Scene = (() => {
     shared.uFogNear.value = D * 2.4; shared.uFogFar.value = D * 8;
     const e = camera.matrixWorld.elements;
     shared.uCamRight.value.set(e[0], 0, e[2]).normalize();
-    groundMat.uniforms.uGridVis.value = 1 - sstep(12, 40, D);
+    // graticule spacing: about 7 major lines across the view
+    const target = (D * 1.3) / 111 / 14;
+    let mi = 0;
+    for (let i = 1; i < GRAT_STEPS.length; i++) if (Math.abs(Math.log(GRAT_STEPS[i] / target)) < Math.abs(Math.log(GRAT_STEPS[mi] / target))) mi = i;
+    const major = GRAT_STEPS[mi], minor = GRAT_STEPS[Math.min(mi + 1, GRAT_STEPS.length - 1)];
+    const fade = major > minor ? clamp(2 * (Math.log(major) - Math.log(target)) / (Math.log(major) - Math.log(minor)), 0, 1) : 0;
+    groundMat.uniforms.uGrat.value.set(major, minor, fade * fade);
+    gratStep = major;
+    const exploring = !view.started || rig.manual || D > 300;
+    gratVis = lerp(gratVis, exploring ? 1 : 0.3, 1 - Math.exp(-dt * 3));
+    groundMat.uniforms.uGratVis.value = gratVis;
     if (fx) updateFx(view, D);
   }
 
@@ -1756,12 +1807,16 @@ const Scene = (() => {
     shared.uPxScale.value = pxScale;
     shared.uPx.value = 1080 / (2 * Math.tan(camera.fov * DEG / 2));
   }
+  function projectWorld(x, y, z) { v3.set(x, y, z).project(camera); return v3; }
   function project(ev, x, y, z) {
     v3.set(x + ev.origin.x, y, z + ev.origin.z).project(camera);
     return v3;
   }
   function recomputeShot(ev) { if (!rig.manual && rig.shotKey) rig.goTo(shotPose(rig.shotKey, ev), 0, rig.shotKey); }
-  return { init, setEvent, update, render, resize, project, recomputeShot, get rig() { return rig; }, get camera() { return camera; }, desiredShot };
+  return {
+    init, setEvent, update, render, resize, project, projectWorld, recomputeShot, desiredShot, groundAtNdc, groundAtClient, flyTo, clampTarget,
+    get rig() { return rig; }, get camera() { return camera; }, get gratStep() { return gratStep; }, get gratVis() { return gratVis; },
+  };
 })();
 
 function cityState(c, t) {
@@ -1829,12 +1884,8 @@ function drawProceduralMap() {
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
   const sea = g.createRadialGradient(W * 0.52, H * 0.5, 0, W * 0.52, H * 0.5, W * 0.62);
-  sea.addColorStop(0, '#0d1626'); sea.addColorStop(1, '#070b14');
+  sea.addColorStop(0, '#0d1626'); sea.addColorStop(1, '#0a111e');
   g.fillStyle = sea; g.fillRect(0, 0, W, H);
-  // graticule
-  g.strokeStyle = 'rgba(130,160,205,0.08)'; g.lineWidth = 1.6;
-  for (let lo = Math.ceil(MAP_BOUNDS.west / 5) * 5; lo <= MAP_BOUNDS.east; lo += 5) { g.beginPath(); g.moveTo(X(lo), 0); g.lineTo(X(lo), H); g.stroke(); }
-  for (let la = Math.ceil(MAP_BOUNDS.south / 5) * 5; la <= MAP_BOUNDS.north; la += 5) { g.beginPath(); g.moveTo(0, Y(la)); g.lineTo(W, Y(la)); g.stroke(); }
   const path = (ctx, poly) => {   // smooth closed curve through the midpoints
     const P = poly.map(([lo, la]) => [X(lo), Y(la)]);
     const n = P.length, mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -1856,23 +1907,22 @@ function drawProceduralMap() {
   g.save(); g.shadowColor = 'rgba(140,180,235,0.8)'; g.shadowBlur = 12; g.strokeStyle = 'rgba(178,202,236,0.6)'; g.lineWidth = 2.4; g.lineJoin = 'round';
   for (const p of ISLANDS) { g.beginPath(); path(g, p); g.stroke(); }
   g.restore();
-  // labels
-  g.save(); g.fillStyle = 'rgba(180,198,225,0.34)'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  for (const [txt, lo, la, rot] of MAP_LABELS) {
-    const sea = /OCEAN|SEA/.test(txt);
-    g.save(); g.translate(X(lo), Y(la)); g.rotate(rot * DEG);
-    g.font = `${sea ? 400 : 600} ${sea ? 30 : 34}px Poppins, system-ui, sans-serif`;
-    if ('letterSpacing' in g) g.letterSpacing = sea ? '10px' : '14px';
-    g.globalAlpha = sea ? 0.7 : 1;
-    g.fillText(txt, 0, 0); g.restore();
-  }
-  g.restore();
-  // land mask (for terrain shading)
+  // mask texture: red = land (terrain shading), green = map labels (faded out when zoomed in)
   const mk = document.createElement('canvas'); mk.width = 2048; mk.height = Math.round(2048 * latSpan / lonSpan);
   const mg = mk.getContext('2d');
   mg.fillStyle = '#000'; mg.fillRect(0, 0, mk.width, mk.height);
-  mg.save(); mg.scale(mk.width / W, mk.height / H); mg.fillStyle = '#fff';
+  mg.save(); mg.scale(mk.width / W, mk.height / H); mg.fillStyle = '#f00';
   for (const p of ISLANDS) { mg.beginPath(); path(mg, p); mg.fill(); }
+  mg.globalCompositeOperation = 'lighter';
+  mg.fillStyle = 'rgb(0,255,0)'; mg.textAlign = 'center'; mg.textBaseline = 'middle';
+  for (const [txt, lo, la, rot] of MAP_LABELS) {
+    const sea = /OCEAN|SEA/.test(txt);
+    mg.save(); mg.translate(X(lo), Y(la)); mg.rotate(rot * DEG);
+    mg.font = `${sea ? 400 : 600} ${sea ? 30 : 34}px Poppins, system-ui, sans-serif`;
+    if ('letterSpacing' in mg) mg.letterSpacing = sea ? '10px' : '14px';
+    mg.globalAlpha = sea ? 0.65 : 1;
+    mg.fillText(txt, 0, 0); mg.restore();
+  }
   mg.restore();
   return { color: cv, mask: mk };
 }
@@ -1933,8 +1983,9 @@ const UI = (() => {
   const setText = (node, text) => { if (cache.get(node) !== text) { cache.set(node, text); node.textContent = text; } };
   const setHTML = (node, html) => { if (cache.get(node) !== html) { cache.set(node, html); node.innerHTML = html; } };
   const toggle = (node, cls, on) => { if (node.classList.contains(cls) !== !!on) node.classList.toggle(cls, !!on); };
-  let ev = null;
+  let ev = null, allEvents = [];
   let labels = [];
+  let gratEls = [];
   let lastCaptionKey = null;
   let instPhase = null;
   let cityRows = [];
@@ -1942,7 +1993,8 @@ const UI = (() => {
   function init(events) {
     for (const id of ['chips', 'phase-reason', 'placeholder-badge', 'event-list', 'run', 'run-text', 'run-icon', 'instrument', 'caption', 'cap-eyebrow', 'cap-title', 'cap-sub', 'cap-result',
       'm-clock', 'm-trig', 'm-trig-sub', 'm-fit', 'm-fit-bar', 'm-fit-gate', 'm-fit-sub', 'm-mag', 'm-curve', 'm-mag-sub', 'm-oe', 'm-oe-bar', 'm-oe-gate', 'm-oe-sub', 'm-alert', 'm-alert-sub',
-      'city-list', 'btn-play', 'play-icon', 'speed', 'timeline', 'tl-fill', 'tl-head', 'tl-marks', 'clock-t', 'clock-tag', 'btn-reset', 'btn-shake', 'btn-mute', 'btn-fs', 'cam-chip', 'data-id', 'labels']) el[id] = $(id);
+      'city-list', 'btn-play', 'play-icon', 'speed', 'timeline', 'tl-fill', 'tl-head', 'tl-marks', 'clock-t', 'clock-tag', 'btn-reset', 'btn-shake', 'btn-mute', 'btn-fs', 'cam-chip', 'data-id', 'labels', 'coords', 'btn-map']) el[id] = $(id);
+    allEvents = events;
     el.mrows = [...document.querySelectorAll('.mrow')];
     // stepper chips
     el.chips.innerHTML = [1, 2, 3, 4, 5].map((k) => `<li class="chip" data-phase="${k}"><span class="chip-num"><b>${k}</b>
@@ -1981,6 +2033,7 @@ const UI = (() => {
     el['btn-mute'].addEventListener('click', () => App.toggleMute());
     el['btn-fs'].addEventListener('click', () => App.toggleFullscreen());
     el['cam-chip'].addEventListener('click', () => App.autoCamera());
+    el['btn-map'].addEventListener('click', () => App.mapOverview());
     initTimeline();
   }
 
@@ -2059,12 +2112,21 @@ const UI = (() => {
   }
   function buildLabels(e) {
     el.labels.innerHTML = ''; labels = [];
+    gratEls = [];
+    for (let k = 0; k < 40; k++) { const g = document.createElement('div'); g.className = 'grat'; g.style.opacity = '0'; el.labels.appendChild(g); gratEls.push({ el: g, txt: '', on: false, x: -1, y: -1 }); }
     const R = (v) => fmt(v, 0);
+    // every scenario as a pin on the Indonesia overview (click to select)
+    allEvents.forEach((o, j) => {
+      const L = addLabel(`pin ${j === e.index ? 'orange sel' : 'amber'}`, `${esc(o.label)} <small>${o.isQuake ? `M ${fmt(o.magTrue)}` : 'not a quake'}</small>`,
+        () => [o.origin.x - e.origin.x, 0, o.origin.z - e.origin.z], (v, D) => (D > 900 ? 1 : 0), 22);
+      L.el.firstChild.addEventListener('click', () => App.selectEvent(j, true));
+      L.pin = true;
+    });
     if (e.isQuake) {
-      addLabel('orange', `Epicentre <small>M ${fmt(e.magTrue)} · ${R(e.depth)} km deep</small>`, () => [0, 0, 0], (v, D) => (v.started || !v.overview) ? 1 - sstep(200, 600, D) * 0.0 : 0, 34);
+      addLabel('orange', `Epicentre <small>M ${fmt(e.magTrue)} · ${R(e.depth)} km deep</small>`, () => [0, 0, 0], (v, D) => ((v.started || !v.overview) && D <= 900 ? 1 : 0), 34);
       addLabel('orange', `Hypocentre <small>${R(e.depth)} km below</small>`, () => [0, -e.depth, 0], (v, D) => (v.started && !(v.phaseP[1] > 0) && v.t < e.tFirst ? 1 - sstep(30, 60, D) : 0), 26);
     } else {
-      addLabel('amber', `Disturbance <small>${isNum(e.footprintM) ? `${fmtInt(e.footprintM)} m wide` : ''}</small>`, () => [0, 0, 0], (v, D) => (v.started || !v.overview ? 1 - sstep(60, 200, D) * 0.0 : 0), 30);
+      addLabel('amber', `Disturbance <small>${isNum(e.footprintM) ? `${fmtInt(e.footprintM)} m wide` : ''}</small>`, () => [0, 0, 0], (v, D) => ((v.started || !v.overview) && D <= 900 ? 1 : 0), 30);
     }
     if (e.firstTrig) {
       const i = e.firstTrig.i;
@@ -2110,8 +2172,56 @@ const UI = (() => {
         }
       }
       const o = op > 0.01 ? 1 : 0;
-      if (o !== L.op) { L.op = o; L.el.style.opacity = String(o); }
+      if (o !== L.op) { L.op = o; L.el.style.opacity = String(o); if (L.pin) L.el.classList.toggle('off', !o); }
     }
+    updateGraticule(view);
+  }
+
+  /* ----- latitude / longitude labels along the edges of the scene area ----- */
+  function updateGraticule(view) {
+    let used = 0;
+    const show = Scene.gratVis > 0.6;
+    if (show) {
+      const step = Scene.gratStep, dec = stepDecimals(step);
+      const place = (sx, sy, txt, cls) => {
+        if (used >= gratEls.length) return;
+        const g = gratEls[used++];
+        if (g.txt !== txt) { g.txt = txt; g.el.textContent = txt; }
+        if (g.cls !== cls) { g.cls = cls; g.el.className = `grat ${cls}`; }
+        if (Math.abs(g.x - sx) > 0.3 || Math.abs(g.y - sy) > 0.3) {
+          g.x = sx; g.y = sy;
+          g.el.style.transform = cls === 'lon' ? `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translateX(-50%)` : `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translateY(-50%)`;
+        }
+        if (!g.on) { g.on = true; g.el.style.opacity = '1'; }
+      };
+      // ground line under one screen row (or column) of the scene area, then each grid line crossing it
+      const along = (s0, s1, key, emit) => {
+        const a = Scene.groundAtNdc(...Layout.stageToNdc(s0[0], s0[1])), b = Scene.groundAtNdc(...Layout.stageToNdc(s1[0], s1[1]));
+        if (!a || !b) return;
+        const ga = worldToGeo(a.x, a.z), gb = worldToGeo(b.x, b.z);
+        const va = ga[key], vb = gb[key];
+        if (Math.abs(vb - va) < 1e-9) return;
+        const lo = Math.min(va, vb), hi = Math.max(va, vb);
+        const k0 = Math.ceil(lo / step - 1e-9), k1 = Math.floor(hi / step + 1e-9);
+        if (k1 - k0 > 24) return;
+        for (let k = k0; k <= k1; k++) {
+          const val = k * step, s = (val - va) / (vb - va);
+          const p = Scene.projectWorld(lerp(a.x, b.x, s), 0, lerp(a.z, b.z, s));
+          if (p.z < -1 || p.z > 1) continue;
+          const [sx, sy] = Layout.toStage(p.x, p.y);
+          emit(val, sx, sy);
+        }
+      };
+      along([470, 104], [1450, 104], 'lon', (val, sx, sy) => { if (sx > 470 && sx < 1450) place(sx, 96, fmtLon(val, dec), 'lon'); });
+      along([458, 150], [458, 940], 'lat', (val, sx, sy) => { if (sy > 150 && sy < 940) place(452, sy, fmtLat(val, dec), 'lat'); });
+    }
+    for (let k = used; k < gratEls.length; k++) { const g = gratEls[k]; if (g.on) { g.on = false; g.el.style.opacity = '0'; } }
+    // coordinates under the cursor (or of the view centre)
+    const D = Scene.rig.dist, dec = D > 2500 ? 1 : D > 250 ? 2 : D > 25 ? 3 : 4;
+    let g = null, label = 'View centre';
+    if (App.pointer) { const h = Scene.groundAtClient(App.pointer.x, App.pointer.y); if (h) { g = worldToGeo(h.x, h.z); label = 'Cursor'; } }
+    if (!g) { const c = Scene.rig.cur; g = worldToGeo(c.x, c.z); }
+    setHTML(el.coords, `<span>${label}</span>${fmtLat(g.lat, dec)} · ${fmtLon(g.lon, dec)}`);
   }
   function updateCityLabel(L, view) {
     const c = L.city, t = view.started ? view.t : -1;
@@ -2491,6 +2601,8 @@ const App = {
   runToggle() { this.overview = false; Scene.rig.manual = Scene.rig.manual && Playback.started; Playback.toggle(); },
   reset() { Playback.reset(); Scene.rig.manual = false; },
   autoCamera() { Scene.rig.manual = false; Scene.rig.shotKey = null; },
+  pointer: null,
+  mapOverview() { Scene.flyTo('national', this.ev); },
   setSpeed(s) { Playback.speed = s; UI.setSpeed(s); },
   stepSpeed(dir) { const i = SPEEDS.indexOf(Playback.speed); this.setSpeed(SPEEDS[clamp(i + dir, 0, SPEEDS.length - 1)]); },
   seekFraction(k) { this.overview = false; Playback.seek(k * this.story.U); },
@@ -2512,6 +2624,7 @@ const App = {
       else if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); const i = this.ev.index + (k === 'ArrowDown' ? 1 : -1); if (i >= 0 && i < this.events.length) { this.selectEvent(i, true); UI.focusCard(i); } }
       else if (/^[1-5]$/.test(k)) { e.preventDefault(); this.jumpPhase(+k); }
       else if (k === 'r' || k === 'R') { e.preventDefault(); this.reset(); }
+      else if (k === 'o' || k === 'O') { e.preventDefault(); this.mapOverview(); }
       else if (k === 'f' || k === 'F') { e.preventDefault(); this.toggleFullscreen(); }
       else if (k === 'm' || k === 'M') { e.preventDefault(); this.toggleMute(); }
       else if (k === '+' || k === '=') { e.preventDefault(); this.stepSpeed(1); }
@@ -2536,6 +2649,7 @@ const App = {
         const k = c.dist * 0.0011 * s, b = c.bear * DEG;
         const rx = -Math.cos(b), rz = -Math.sin(b), fx = -Math.sin(b), fz = Math.cos(b);
         c.x += (-dx * rx + dy * fx) * k; c.z += (-dx * rz + dy * fz) * k;
+        Scene.clampTarget();
       } else {
         c.bear = (c.bear - dx * 0.25 * s + 360) % 360;
         c.el = clamp(c.el + dy * 0.2 * s, 8, 89);
@@ -2545,9 +2659,15 @@ const App = {
     cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const rig = Scene.rig; rig.manual = true; rig.anim = null;
-      rig.cur.dist = clamp(rig.cur.dist * Math.exp(e.deltaY * 0.0012), 0.3, 30000);
+      const rig = Scene.rig, c = rig.cur; rig.manual = true; rig.anim = null;
+      const nd = clamp(c.dist * Math.exp(e.deltaY * 0.0012), 0.3, 12000), f = nd / c.dist;
+      const g = Scene.groundAtClient(e.clientX, e.clientY);       // zoom towards the point under the cursor
+      if (g) { c.x = g.x + (c.x - g.x) * f; c.z = g.z + (c.z - g.z) * f; }
+      c.dist = nd;
+      Scene.clampTarget();
     }, { passive: false });
+    window.addEventListener('pointermove', (e) => { this.pointer = e.target === cv ? { x: e.clientX, y: e.clientY } : null; });
+    cv.addEventListener('pointerleave', () => { if (!drag) this.pointer = null; });
     document.addEventListener('fullscreenchange', () => { Layout.update(); Scene.resize(); });
   },
   tick(dt, wall) {

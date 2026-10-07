@@ -14,9 +14,15 @@ for a 75-second live demo on a 16:9 projector. Open it in Chrome or Edge and pre
 | F | fullscreen |
 | M | sound on / off (starts muted) |
 | + / − | speed 0.25× to 4× |
+| O | Indonesia overview (map with a latitude / longitude grid) |
 
-Mouse: drag to orbit, right-drag (or Shift+drag) to pan, wheel to zoom. **R** or the
-"Auto camera" chip returns to the choreographed camera.
+Mouse: drag to orbit, right-drag (or Shift+drag) to pan, wheel to zoom towards the cursor.
+**R** or the "Auto camera" chip returns to the choreographed camera.
+
+Map mode: zoom out (or press **O**) to see all of Indonesia. A latitude / longitude grid
+adapts to the zoom level (5° on the overview, down to 0.01° on the sensor patch), its
+values are labelled along the top and left edges of the map, the bottom-right corner shows
+the coordinates under the cursor, and every scenario appears as a pin you can click.
 
 ## Data
 

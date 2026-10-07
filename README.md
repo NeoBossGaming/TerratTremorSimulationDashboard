@@ -7,9 +7,10 @@ for a live demo on a 16:9 projector. Open it in Chrome or Edge and press **F**.
 
 The page opens on a map of Indonesia.
 
-* **Click anywhere on the map**: an earthquake starts there (live toy model) and you watch the
-  node network detect it in real time. Magnitude and depth for the next click are set in the
-  bottom bar.
+* **Click anywhere on the map**: an earthquake starts there (live toy model). The camera flies
+  in, the nodes detect it step by step (the same five explained steps as the scenarios), then
+  the camera zooms out to follow the ALERT across the island. Magnitude and depth for the next
+  click are set in the bottom bar.
 * **Click a pin**: it plays that prepared scenario (the six events in `EVENTS`). The camera
   flies in and the scenario starts on its own.
 * One earthquake at a time: while one is running, map and pin clicks are ignored. Wait until it
@@ -40,13 +41,23 @@ The "Auto camera" chip returns to the choreographed camera.
 The default is a light "atlas" look. `THEME` at the top of the script sets the start theme
 (`'light'` or `'dark'`); **T** switches at any time.
 
+## The node network on the map
+
+The hypothetical network (one node every 200 m on Indonesian land) is drawn on the GPU at
+every zoom level: up close you see every node; as the camera zooms out the dots thin out, and
+each one stands for the nodes around it. Nodes light up amber when they trigger, blue when the
+ALERT reaches them, and red where the S wave arrives first (no warning).
+
+In the scenarios, the nodes of the data patch are drawn from the data; the nodes around them
+follow the same toy wave model (P and S speeds, the amplitude needed to trigger) and the
+ALERT's reach curve from the data, up to the distance the data covers (dashed circle).
+
 ## Live playground (toy model)
 
-The national node field (one dot per ~5 km cell of the hypothetical 200 m network, about
-78,000 dots, drawn entirely on the GPU) lights up amber where nodes trigger, blue where the
-ALERT arrives, and red where the S wave arrives first (no warning). The ALERT floods only over
-connected land, because the radio mesh cannot cross open sea. A detailed 0.5 km patch around
-the epicentre runs the same five checks as the scenarios.
+A detailed 200 m patch (8 km radius) around the epicentre runs the same five checks as the
+scenarios. The ALERT then floods only over connected land, because the radio mesh cannot
+cross open sea. After the last city has been hit, the rest plays at 4× speed (the clock says
+so).
 
 The playground uses the same toy physics as `tools/make_placeholder_events.mjs`. It is a
 teaching toy, not the real simulation, and it is labelled LIVE TOY MODEL on screen.

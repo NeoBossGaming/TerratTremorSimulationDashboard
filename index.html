@@ -11,9 +11,10 @@
 ================================================================================
  Designed for a 16:9 projector at 1920 x 1080; the whole interface scales to fit.
 
- START  Click anywhere on the map: an earthquake starts there (live toy model) and
-        the nodes detect it in real time. Or click a pin: it plays that prepared
-        scenario. One earthquake at a time: wait until it finishes, or press R.
+ START  Click anywhere on the map: an earthquake starts there (live toy model); the
+        camera flies in, the five steps are explained, then it zooms out to follow
+        the ALERT. Or click a pin: it plays that prepared scenario the same way.
+        One earthquake at a time: wait until it finishes, or press R.
         Magnitude and depth of the next click are set in the bottom bar.
 
  KEYS   Space  play / pause (with nothing running: plays the current scenario)
@@ -383,6 +384,7 @@ const PACING = {
   floodRate: 0.45,              // while the ALERT floods the network
   tailRate: 1.0,                // afterwards: real time, so countdowns tick in real seconds
   tailRateNoAlert: 2.0,
+  liveFastRate: 4.0,            // live quakes: after the cities have been hit, the rest plays at this speed
   holds: { 1: 2.8, 2: 5.6, 3: 4.8, 4: 4.8, 5: 4.4 },   // seconds the clock is frozen per phase
   endPad: 2.0,                  // simulated seconds shown after the last thing happens
 };
@@ -392,7 +394,7 @@ const PACING = {
 // cell of the hypothetical 200 m network; the cell size keeps it light (about 75,000 dots).
 const PLAYGROUND = {
   cellDeg: 0.045,                 // national node field: one dot per ~5 km cell on Indonesian land
-  fineSpacingKm: 0.5, fineRadiusKm: 20,   // detailed nodes around the epicentre, for the decision
+  fineSpacingKm: 0.2, fineRadiusKm: 8,    // detailed nodes (200 m, like the real design) around the epicentre, for the decision
   vp: 6.0, vs: 3.5, alertKms: 48,
   noiseG: 0.004, triggerRatio: 4, minTriggers: 5, holdRadiusKm: 2.5, collectS: 0.6,
   fitTolS: 0.3, fitRatio: 0.7, gate: 4.5, oeGate: 0.5, nbRadiusKm: 0.45,
@@ -401,15 +403,19 @@ const PLAYGROUND = {
   magnitudes: [4.5, 5.5, 6.5, 7.5], depths: [10, 30, 60], defaultMag: 6.5, defaultDepth: 10,
 };
 
+// The hypothetical network drawn on the map: one node every 200 m on Indonesian land (the dashboard
+// thins it out when zoomed out; each dot then stands for the nodes around it).
+const NETWORK = { spacingKm: 0.2 };
+
 const QUALITY = { maxPixelRatio: 1.5, msaaSamples: 4, bloomThreshold: 0.5 };
 
 // Colour theme: 'light' (friendly atlas look, default) or 'dark' (night look). Press T to switch.
 const THEME = 'light';
 const THEMES = {
   light: {
-    bg: '#e8eef3', sea: '#cddfeb', fog: '#e3ebf1', orange: '#e46f12', amber: '#d08e08', cyan: '#0b86c4', green: '#18935f', red: '#d63c42',
-    pwave: '#4a63d6', swave: '#e46f12', white: '#33465a', idle: '#6f8296', grid: '#58758f', dust: '#a87c50',
-    fieldIdle: '#8193a7', shake: '#ff5a00', grat: '#46678a', label: '#8aa0b6', prov: '#9a7046',
+    bg: '#e8eef3', sea: '#cddfeb', fog: '#e3ebf1', orange: '#e2600a', amber: '#c98000', cyan: '#0877bd', green: '#0f8f58', red: '#d3303a',
+    pwave: '#3348cc', swave: '#e2600a', white: '#2b3b4d', idle: '#5a6d84', grid: '#4f6c88', dust: '#a87c50',
+    fieldIdle: '#7084a0', shake: '#ff5a00', grat: '#46678a', label: '#8aa0b6', prov: '#9a7046',
     post: { bloom: 0, vignette: 0.12, grain: 0.012, soft: 0 },
   },
   dark: {
@@ -582,6 +588,8 @@ function prepareEvent(raw, index) {
   ev.reach = (Array.isArray(fl.reach_curve) ? fl.reach_curve : []).filter((p) => Array.isArray(p) && isNum(p[0]) && isNum(p[1])).sort((a, b) => a[0] - b[0]);
   const rs = (Array.isArray(fl.relayer_sample) ? fl.relayer_sample : []).filter((r) => r && isNum(r.x_km) && isNum(r.y_km) && isNum(r.t_s));
   ev.relayers = rs.map((r) => ({ x: r.x_km, z: -r.y_km, t: r.t_s }));
+  const fx = fl.extent_km;   // optional [west, south, east, north] km of the flooded area (live quakes)
+  ev.floodExtent = Array.isArray(fx) && fx.length === 4 && fx.every(isNum) ? [[fx[0], -fx[3]], [fx[2], -fx[1]]] : null;
 
   // --- cities ---
   ev.cities = (Array.isArray(raw.cities) ? raw.cities : []).filter((c) => c && isNum(c.dist_km)).map((c) => {
@@ -654,15 +662,18 @@ class Story {
   constructor(ev) {
     this.ev = ev;
     this.live = ev.live;
-    const holds = ev.live ? [] : ev.phases.filter((p) => isNum(p.t_s)).map((p) => ({ phase: p.phase, t: clamp(p.t_s, 0, ev.tEnd) }))
+    const holds = ev.phases.filter((p) => isNum(p.t_s)).map((p) => ({ phase: p.phase, t: clamp(p.t_s, 0, ev.tEnd) }))
       .sort((a, b) => a.t - b.t || a.phase - b.phase);
     const tDec0 = Math.max(0, ev.tFirst - 0.3);
     const tDec1 = Math.max(tDec0 + 0.05, ev.tLastPhase + 0.05);
     const decRate = clamp((tDec1 - tDec0) / PACING.decisionSeconds, PACING.decisionRateMin, PACING.decisionRateMax);
     const floodEnd = ev.alert ? Math.max(ev.alert.t, ev.tFloodEnd || ev.alert.t) : null;
-    const tail = ev.alert ? PACING.tailRate : PACING.tailRateNoAlert;
-    const rateAt = (t) => (ev.live ? 1 : t < tDec0 ? PACING.preRate : t < tDec1 ? decRate : floodEnd !== null && t < floodEnd ? PACING.floodRate : tail);
-    const cuts = [0, ev.tEnd, tDec0, tDec1, ...(floodEnd !== null ? [floodEnd] : []), ...holds.map((h) => h.t)]
+    const tail = ev.live ? 1 : ev.alert ? PACING.tailRate : PACING.tailRateNoAlert;
+    const floodRate = ev.live ? 1 : PACING.floodRate;   // a live flood covers a whole island: real time
+    // live: once the alert has spread and the last city has been hit, fast-forward the rest
+    const tFast = ev.live ? Math.max(tDec1, floodEnd || 0, ...ev.cities.map((c) => c.tS || 0)) + 1 : Infinity;
+    const rateAt = (t) => (t < tDec0 ? PACING.preRate : t < tDec1 ? decRate : floodEnd !== null && t < floodEnd ? floodRate : t >= tFast ? PACING.liveFastRate : tail);
+    const cuts = [0, ev.tEnd, tDec0, tDec1, ...(floodEnd !== null ? [floodEnd] : []), ...(tFast < ev.tEnd ? [tFast] : []), ...holds.map((h) => h.t)]
       .filter((t) => t >= 0 && t <= ev.tEnd).map((t) => +t.toFixed(6));
     const uniq = [...new Set(cuts)].sort((a, b) => a - b);
     this.segs = [];
@@ -785,13 +796,13 @@ vec4 outCol(vec3 c, float a){ float k = uLight > 0.5 ? clamp(a, 0.0, 1.0) : max(
 
 const DECAL_VS = `
 attribute vec4 iA; attribute vec4 iB; attribute vec2 iC;
-uniform float uPx;
+uniform float uPx; uniform float uLight;
 ${GLSL_FOG}
 varying vec2 vQ; varying vec4 vCol; varying float vStyle;
 void main(){
   vec4 c = modelMatrix * vec4(iA.xyz, 1.0);
   float dist = length(c.xyz - cameraPosition);
-  float minR = iC.y * dist / uPx;
+  float minR = iC.y * dist / uPx * (uLight > 0.5 ? 1.35 : 1.0);
   float r = max(iA.w, minR);
   float shrink = clamp(iA.w / max(r, 1e-6), 0.0, 1.0);
   vec3 p = iA.xyz + vec3(position.x * r, 0.0, position.z * r);
@@ -808,11 +819,17 @@ void main(){
   if (r > 1.0) discard;
   float aa = fwidth(r) * 1.3;
   float a = 0.0;
-  if (vStyle < 0.5) {                       // glowing dot
-    a = (1.0 - smoothstep(0.32 - aa, 0.32 + aa, r)) + pow(max(1.0 - r, 0.0), 2.4) * 0.6;
+  vec3 col = vCol.rgb;
+  bool paper = uLight > 0.5;
+  if (vStyle < 0.5) {
+    if (paper) {                            // solid dot; active ones (opaque) get a dark rim
+      a = 1.0 - smoothstep(0.62 - aa, 0.62 + aa, r);
+      col = mix(col, col * 0.55, smoothstep(0.36 - aa, 0.36 + aa, r) * smoothstep(0.75, 0.95, vCol.a));
+    } else a = (1.0 - smoothstep(0.32 - aa, 0.32 + aa, r)) + pow(max(1.0 - r, 0.0), 2.4) * 0.6;   // glowing dot
   } else if (vStyle < 1.5) {                // ring
     float d = abs(r - 0.8);
-    a = (1.0 - smoothstep(0.075 - aa, 0.075 + aa, d)) + exp(-d * 10.0) * 0.22 * (1.0 - smoothstep(0.9, 1.0, r));
+    a = paper ? 1.0 - smoothstep(0.11 - aa, 0.11 + aa, d)
+              : (1.0 - smoothstep(0.075 - aa, 0.075 + aa, d)) + exp(-d * 10.0) * 0.22 * (1.0 - smoothstep(0.9, 1.0, r));
   } else if (vStyle < 2.5) {                // dashed ring (ghost)
     float d = abs(r - 0.8);
     float ang = atan(vQ.y, vQ.x + 1e-6) * 2.2282;  // 14 dashes
@@ -827,7 +844,7 @@ void main(){
   } else {                                  // soft disc
     a = pow(max(1.0 - r, 0.0), 1.6);
   }
-  gl_FragColor = outCol(vCol.rgb, a * vCol.a);
+  gl_FragColor = outCol(col, a * vCol.a);
 }`;
 
 const BEAM_VS = `
@@ -877,7 +894,7 @@ varying vec3 vN; varying vec3 vV; varying float vY; varying float vFog;
 void main(){
   if (vY > 0.0) discard;
   float f = clamp(1.0 - abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0);
-  float a = pow(f, 4.0) * 0.8 + 0.015;
+  float a = pow(f, 4.0) * 0.8 + (uLight > 0.5 ? 0.0 : 0.015);
   gl_FragColor = outCol(uColor, a * uOpacity * uUnder * vFog);
 }`;
 
@@ -926,12 +943,14 @@ attribute float aTrig; attribute float aAlert; attribute float aS;
 uniform float uT, uLive, uPx, uPxScale, uVis; uniform vec3 uHide;
 uniform vec3 uIdle, uAmber, uCyan, uRed, uShake;
 ${GLSL_FOG}
-varying vec3 vC; varying float vA;
+uniform float uLight;
+varying vec3 vC; varying float vA; varying float vAct; varying float vPs;
 void main(){
   vec4 w = modelMatrix * vec4(position, 1.0);
   vec4 mv = viewMatrix * w;
   float dist = max(-mv.z, 1e-3);
   vec3 c = uIdle; float a = 0.55; float s = 1.0;
+  vAct = uLive > 0.5 && uT >= min(aTrig, min(aAlert, aS)) ? 1.0 : 0.0;
   if (uLive > 0.5) {
     if (uT >= aTrig) { float k = exp(-(uT - aTrig) / 0.35); c = uAmber; a = 0.95 + 1.6 * k; s = 1.0 + 1.3 * k; }
     if (uT >= aAlert) { float k = exp(-(uT - aAlert) / 0.4); c = uCyan; a = max(a, 0.95) + 1.8 * k; s = max(s, 1.0 + 1.5 * k); }
@@ -940,16 +959,19 @@ void main(){
   float hide = uHide.z > 0.0 ? 1.0 - smoothstep(uHide.z * 0.85, uHide.z, length(w.xz - uHide.xy)) : 0.0;
   vA = a * uVis * (1.0 - hide) * fogKeep(dist);
   vC = c;
-  gl_PointSize = clamp(1.2 * uPx / dist, 1.3, 3.4) * s * uPxScale;
+  gl_PointSize = uLight > 0.5 ? clamp(1.2 * uPx / dist, 1.6, 3.4) * s * uPxScale * (1.0 + 0.8 * vAct)   // paper: active dots larger
+                              : clamp(1.2 * uPx / dist, 1.3, 3.4) * s * uPxScale;
+  vPs = gl_PointSize;
   gl_Position = projectionMatrix * mv;
 }`;
 const FIELD_FS = `
 ${GLSL_OUT}
-varying vec3 vC; varying float vA;
+varying vec3 vC; varying float vA; varying float vAct; varying float vPs;
 void main(){
   vec2 c = gl_PointCoord - 0.5;
   float r = length(c) * 2.0;
   if (r > 1.0) discard;
+  if (uLight > 0.5) { gl_FragColor = outCol(mix(vC, vC * 0.42, smoothstep(0.5, 0.7, r) * vAct * step(5.0, vPs)), (1.0 - smoothstep(0.8, 1.0, r)) * vA); return; }
   float a = (1.0 - smoothstep(0.5, 1.0, r)) * 0.75 + pow(max(1.0 - r, 0.0), 2.0) * 0.45;
   gl_FragColor = outCol(vC, a * vA);
 }`;
@@ -977,9 +999,10 @@ void add(vec3 c, float k){ k = max(k, 0.0); acc += vec4(c * k, k); }
 float line(float d, float px, float w){ return 1.0 - smoothstep(w * px, (w + 1.2) * px, abs(d)); }
 float front(float r, float px, float R){
   float d = r - R;
-  float crisp = line(d, px, 1.0);
-  float glow = exp(-abs(d) / max(px * 7.0, R * 0.012)) * 0.6;
-  float trail = d < 0.0 ? exp(d / max(px * 50.0, R * 0.16)) * 0.2 : 0.0;
+  bool paper = uLight > 0.5;
+  float crisp = line(d, px, paper ? 2.0 : 1.0) * (paper ? 1.4 : 1.0);
+  float glow = exp(-abs(d) / max(px * 7.0, R * 0.012)) * (paper ? 0.25 : 0.6);
+  float trail = d < 0.0 ? exp(d / max(px * 50.0, R * 0.16)) * (paper ? 0.1 : 0.2) : 0.0;
   return crisp + glow + trail;
 }
 void main(){
@@ -987,18 +1010,10 @@ void main(){
   float r = length(q);
   float px = max(fwidth(r), 1e-6);
   float edge = 1.0 - smoothstep(uExtent * 0.75, uExtent * 0.98, max(abs(q.x), abs(q.y)));
-  vec2 dir = q / max(r, 1e-5);
-  float ang = acos(clamp(dot(dir, uWedgeDir), -1.0, 1.0));
-  float inWedge = (1.0 - smoothstep(uWedgeHalf - px / max(r, 1e-3), uWedgeHalf + px / max(r, 1e-3), ang)) * (1.0 - smoothstep(uRMax - px, uRMax + px, r));
-  // network lattice (2 km, drawn only at the wedge scale)
-  vec2 cell = (fract(q / 2.0 + 0.5) - 0.5) * 2.0;
-  float netDot = 1.0 - smoothstep(px * 0.9, px * 2.0, length(cell));
-  if (uWedgeVis > 0.001) {
-    float side = line((ang - uWedgeHalf) * r, px, 0.6) * step(r, uRMax);
-    float arc = line(r - uRMax, px, 0.6) * step(ang, uWedgeHalf);
-    float arcs = line((fract(r / 20.0 + 0.5) - 0.5) * 20.0, px, 0.35) * step(ang, uWedgeHalf) * step(r, uRMax - 2.0) * step(5.0, r);
-    add(uGCol, (side * 0.5 + arc * 0.5 + arcs * 0.22) * uWedgeVis);
-    add(uGCol, netDot * inWedge * 0.22 * uNetVis);
+  // edge of the simulated area (the ALERT data stops at this distance)
+  if (uWedgeVis > 0.001 && uRMax > 0.0) {
+    float dashR = step(0.45, fract(atan(q.y, q.x + 1e-6) * 9.5493 * 2.0));
+    add(uGCol, line(r - uRMax, px, 0.6) * dashR * 0.5 * uWedgeVis);
   }
   if (uQuake > 0.5) {
     float rp = uVp * uT, rs = uVs * uT;
@@ -1006,7 +1021,7 @@ void main(){
     if (rs > uDepth) {
       float R = sqrt(rs * rs - uDepth * uDepth);
       add(uSCol, front(r, px, R) * 1.15 / (1.0 + R / 180.0));
-      add(uSCol, r < R ? 0.045 * exp(-(R - r) / max(R * 0.6, 0.5)) : 0.0);
+      add(uSCol, r < R ? (uLight > 0.5 ? 0.025 : 0.045) * exp(-(R - r) / max(R * 0.6, 0.5)) : 0.0);
     }
     // the P wave about to surface: a soft glow grows over the epicentre
     float sp = smoothstep(0.55 * uDepth, uDepth, rp) * (1.0 - smoothstep(uDepth, uDepth * 1.3 + 0.3, rp));
@@ -1022,8 +1037,8 @@ void main(){
     float d = dl - uAlertR;
     float fr = line(d, px, 1.5) + exp(-abs(d) / max(px * 9.0, uAlertR * 0.02)) * 0.75;
     float fill = d < 0.0 ? 0.05 + 0.1 * exp(d / max(uAlertR * 0.22, 0.4)) : 0.0;
-    float m = max(inWedge, 1.0 - smoothstep(uLocalR - px, uLocalR + px, dl));
-    add(uACol, (fr + fill + netDot * step(d, 0.0) * 0.6 * uNetVis) * m * uAlertOn);
+    float m = uRMax > 0.0 ? 1.0 - smoothstep(uRMax - px, uRMax + px, r) : 1.0;
+    add(uACol, (fr + fill) * m * uAlertOn);
   }
   if (uNoiseVis > 0.001) {
     float dash = step(0.42, fract(atan(q.y, q.x + 1e-6) * 3.8197));
@@ -1050,7 +1065,64 @@ uniform sampler2D uCtx; uniform vec4 uCtxBounds; uniform float uHasCtx;
 uniform vec2 uNoiseOrigin; uniform vec4 uGeo; uniform vec3 uGrat; uniform float uGratVis;
 uniform vec3 uFogCol; uniform vec3 uSeaCol; uniform float uFogNear, uFogFar; uniform float uDetail;
 uniform vec3 uGratCol, uLabelCol, uProvCol; uniform float uLight;
+// sensor network: a 200 m lattice of nodes on Indonesian land, thinned out as the camera zooms out
+uniform vec4 uNet;            // on, base spacing (km), minimum spacing on screen (px), idle opacity
+uniform vec2 uNetO;           // world xz the lattice is anchored to (the epicentre)
+uniform float uNetT;          // event time (s); < 0 = before the event
+uniform vec4 uNetQ;           // depth, vp, vs, mode (0 none, 1 earthquake, 2 local disturbance, 3 earthquake without triggers)
+uniform vec3 uNetR;           // hypocentral distance (km) for a P trigger, an S trigger, felt shaking
+uniform vec3 uNetN;           // disturbance: radius (km), first trigger (s), duration (s)
+uniform vec4 uNetA;           // ALERT: time (1e9 = none), speed (km/s), max distance from the epicentre (0 = none), connected-land mask
+uniform vec2 uNetL;           // ALERT leader, world xz
+uniform vec4 uNetHide;        // detailed patch (drawn separately): world box x0, z0, x1, z1
+uniform vec4 uNetHideC;       // patch circle centre xz, radius (0 = box only), strength
+uniform sampler2D uComp; uniform vec4 uCompA;   // land reached by the live ALERT: west, north, lon span, lat span
+uniform vec3 uNetIdle, uNetAmber, uNetCyan, uNetRed;
 varying vec3 vW;
+float nh(vec2 p){ p = fract(p * vec2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
+// one level of the lattice at spacing s: premultiplied colour and coverage
+// wx, wy: change of the world position per screen pixel (x and y), so dots stay round on screen
+vec4 netLevel(vec2 w, float s, float pxw, vec2 wx, vec2 wy){
+  vec2 id = floor((w - uNetO) / s + 0.5);
+  vec2 key = id * (s / uNet.y);                    // index on the 200 m lattice, so coarser levels are subsets
+  vec2 np = uNetO + id * s + (vec2(nh(key), nh(key + 71.3)) - 0.5) * uNet.y * 0.5;
+  vec2 nuv = (np - uBounds.xy) / (uBounds.zw - uBounds.xy);
+  if (nuv.x < 0.0 || nuv.y < 0.0 || nuv.x > 1.0 || nuv.y > 1.0) return vec4(0.0);
+  if (texture2D(uMask, vec2(nuv.x, 1.0 - nuv.y)).r < 0.75) return vec4(0.0);   // Indonesian land only
+  vec2 hb = step(uNetHide.xy, np) * step(np, uNetHide.zw);
+  float inPatch = hb.x * hb.y * (uNetHideC.z > 0.0 ? step(length(np - uNetHideC.xy), uNetHideC.z) : 1.0);
+  float vis = 1.0 - inPatch * uNetHideC.w;
+  if (vis <= 0.001) return vec4(0.0);
+  float t = uNetT, h = nh(key + 13.7), dE = length(np - uNetO);
+  float tTrig = 1e9, tAl = 1e9, tS = 1e9;
+  if (uNetQ.w > 0.5 && uNetQ.w < 1.5 || uNetQ.w > 2.5) {
+    float R = sqrt(dE * dE + uNetQ.x * uNetQ.x), j = 0.85 + 0.3 * h;
+    if (uNetQ.w < 1.5) {
+      if (R < uNetR.x * j) tTrig = R / uNetQ.y + 0.03 + 0.08 * h;
+      else if (R < uNetR.y * j) tTrig = R / uNetQ.z + 0.03 + 0.08 * h;
+    }
+    if (R < uNetR.z) tS = R / uNetQ.z;
+  } else if (uNetQ.w > 1.5 && uNetQ.w < 2.5 && dE < uNetN.x) tTrig = uNetN.y + h * uNetN.z * 0.5;
+  if (uNetA.x < 1e8 && (uNetA.z <= 0.0 || dE <= uNetA.z)) {
+    float ok = 1.0;
+    if (uNetA.w > 0.5) {
+      float lon = 110.0 + uGeo.x + np.x / uGeo.z, lat = uGeo.y - np.y / uGeo.w - 10.0;
+      ok = step(0.2, texture2D(uComp, vec2((lon - uCompA.x) / uCompA.z, (uCompA.y - lat) / uCompA.w)).r);
+    }
+    if (ok > 0.5) tAl = uNetA.x + length(np - uNetL) / uNetA.y;
+  }
+  vec3 c = uNetIdle; float a = uNet.w, sz = 1.0, act = 0.0;
+  if (t >= tTrig) { float k = exp(-(t - tTrig) / 0.35); c = uNetAmber; a = 1.0; sz = 1.0 + 0.35 * k; act = 1.0; }
+  if (t >= tAl) { float k = exp(-(t - tAl) / 0.4); c = uNetCyan; a = 1.0; sz = max(sz, 1.0 + 0.4 * k); act = 1.0; }
+  if (t >= tS) { float k = exp(-(t - tS) / 0.6); c = tAl <= tS ? uNetCyan : uNetRed; a = 1.0; sz = max(sz, 1.0 + 0.3 * k); act = 1.0; }
+  float r = clamp(s / pxw * 0.09, 1.4, 3.2) * sz * (1.0 + 0.15 * act);
+  vec2 d = w - np;
+  float det = wx.x * wy.y - wy.x * wx.y;
+  float dpx = abs(det) > 1e-12 ? length(vec2(wy.y * d.x - wy.x * d.y, wx.x * d.y - wx.y * d.x) / det) : 1e9;
+  float cov = (1.0 - smoothstep(r - 0.75, r + 0.75, dpx)) * a * vis;
+  if (uLight > 0.5 && act > 0.5 && r > 2.4) c = mix(c, c * 0.55, smoothstep(r * 0.55 - 0.6, r * 0.55 + 0.6, dpx));   // dark rim on paper
+  return vec4(c * cov, cov);
+}
 void main(){
   vec2 uv = (vW.xz - uBounds.xy) / (uBounds.zw - uBounds.xy);
   vec2 uvc = clamp(uv, 0.0, 1.0);
@@ -1090,7 +1162,7 @@ void main(){
   vec2 g = (n1.gb - 0.5) * 0.55 * f1 + (n2.gb - 0.5) * 0.4 * f2 + (n3.gb - 0.5) * 0.3 * f3 + (n4.gb - 0.5) * 0.22 * f4;
   float shade = clamp(1.0 + dot(g, vec2(-0.62, -0.78)) * 1.1, 0.78, 1.22);
   col = mix(col, uProvCol, provLine * 0.5);
-  float relief = uLight > 0.5 ? 0.3 : 1.0;          // paper map: gentle relief only
+  float relief = uLight > 0.5 ? 0.15 : 1.0;         // paper map: gentle relief only
   col *= mix(1.0 + h * 0.12 * relief, (1.0 + h * 0.45 * relief) * mix(1.0, shade, relief), land * uDetail);
   // latitude / longitude graticule; spacing adapts to the zoom (major + fading minor lines)
   float lonR = uGeo.x + vW.x / uGeo.z, latR = uGeo.y - vW.z / uGeo.w;   // degrees from 110E / 10S
@@ -1099,9 +1171,22 @@ void main(){
   vec2 dm = abs(fract(vec2(lonR, latR) / uGrat.y - 0.5) - 0.5) * uGrat.y;
   float gM = max(1.0 - smoothstep(0.0, fwg.x * 1.25, dM.x), 1.0 - smoothstep(0.0, fwg.y * 1.25, dM.y));
   float gm = max(1.0 - smoothstep(0.0, fwg.x * 1.1, dm.x), 1.0 - smoothstep(0.0, fwg.y * 1.1, dm.y));
+  if (uLight > 0.5) col = mix(col, vec3(dot(col, vec3(0.299, 0.587, 0.114))) * vec3(0.995, 1.0, 1.012), 0.55 * zoomIn);   // quieter up close
   float gk = (gM * 0.17 + gm * 0.17 * uGrat.z) * uGratVis;
   col = uLight > 0.5 ? mix(col, uGratCol, gk * 1.5) : col + uGratCol * gk;
   col = mix(col, uLabelCol, mapLabel * (uLight > 0.5 ? 0.6 : 0.32));
+  if (uNet.x > 0.5) {
+    // nodes: two nested lattice levels; the finer one fades out as the camera zooms out
+    vec2 wx = dFdx(vW.xz), wy = dFdy(vW.xz);
+    float pw = sqrt(abs(wx.x * wy.y - wy.x * wx.y));         // km per pixel (area scale)
+    float lf = log2(max(uNet.z * pw / uNet.y, 1.0));
+    float L = floor(lf);
+    float netVis = 1.0 - smoothstep(5.0, 5.9, lf);          // beyond ~6 km spacing the national field takes over
+    if (netVis > 0.001) {
+      vec4 nd = max(netLevel(vW.xz, uNet.y * exp2(L + 1.0), pw, wx, wy), netLevel(vW.xz, uNet.y * exp2(L), pw, wx, wy) * (1.0 - fract(lf))) * netVis;
+      col = uLight > 0.5 ? col * (1.0 - nd.a) + nd.rgb : col * (1.0 - 0.5 * nd.a) + nd.rgb * 1.15;
+    }
+  }
   float f = smoothstep(uFogNear, uFogFar, length(vW - cameraPosition));
   gl_FragColor = vec4(mix(col, uFogCol, f), 1.0);
 }`;
@@ -1396,8 +1481,8 @@ const Scene = (() => {
     post = new PostFX(renderer);
     post.setLook(THEMES[themeName].post);
     rig = new CameraRig(camera);
-    buildGround();
     buildField();
+    buildGround();
     resize();
   }
 
@@ -1469,19 +1554,32 @@ const Scene = (() => {
     const points = new THREE.Points(g, m);
     points.frustumCulled = false; points.renderOrder = 1;
     scene.add(points);
-    field = { points, n, x: new Float32Array(xs), z: new Float32Array(zs), grid, nLon, nLat, step, aTrig, aAlert, aS, live: false };
+    const cellOf = new Int32Array(n);
+    for (let c = 0; c < grid.length; c++) if (grid[c] >= 0) cellOf[grid[c]] = c;
+    compData = new Uint8Array(nLon * nLat * 4);
+    compTex = new THREE.DataTexture(compData, nLon, nLat, THREE.RGBAFormat);
+    compTex.magFilter = compTex.minFilter = THREE.LinearFilter; compTex.needsUpdate = true;
+    field = { points, n, x: new Float32Array(xs), z: new Float32Array(zs), grid, nLon, nLat, step, aTrig, aAlert, aS, cellOf, live: false };
+  }
+  let compTex = null, compData = null;
+  function setComp(alert) {      // which land cells the live ALERT reaches (the radio mesh cannot cross the sea)
+    compData.fill(0);
+    if (alert) for (let k = 0; k < field.n; k++) if (alert[k] < 1e8) compData[field.cellOf[k] * 4] = 255;
+    compTex.needsUpdate = true;
   }
   // upload per-node times for a live quake (Float32Arrays of length field.n; 1e9 = never)
   function setFieldTimes(trig, alert, sArr) {
     field.aTrig.array.set(trig); field.aAlert.array.set(alert); field.aS.array.set(sArr);
     field.aTrig.needsUpdate = field.aAlert.needsUpdate = field.aS.needsUpdate = true;
     field.live = true;
+    setComp(alert);
   }
   function clearField() {
     if (!field.live) return;
     field.aTrig.array.fill(1e9); field.aAlert.array.fill(1e9); field.aS.array.fill(1e9);
     field.aTrig.needsUpdate = field.aAlert.needsUpdate = field.aS.needsUpdate = true;
     field.live = false;
+    setComp(null);
   }
 
   /* ----- ground map ----- */
@@ -1531,6 +1629,12 @@ const Scene = (() => {
         uGeo: { value: new THREE.Vector4(GEO.lon0 - 110, GEO.lat0 + 10, GEO.kx, GEO.ky) }, uGrat: { value: new THREE.Vector3(5, 1, 0) }, uGratVis: { value: 1 },
         uFogCol: { value: new THREE.Color(COLORS.fog) }, uSeaCol: { value: new THREE.Color(COLORS.sea) }, uFogNear: shared.uFogNear, uFogFar: shared.uFogFar, uDetail: { value: 1 },
         uGratCol: { value: new THREE.Color(COLORS.grat) }, uLabelCol: { value: new THREE.Color(COLORS.label) }, uProvCol: { value: new THREE.Color(COLORS.prov) }, uLight: shared.uLight,
+        uNet: { value: new THREE.Vector4(1, NETWORK.spacingKm, 11, 0.5) }, uNetO: { value: new THREE.Vector2() }, uNetT: { value: -1 },
+        uNetQ: { value: new THREE.Vector4() }, uNetR: { value: new THREE.Vector3() }, uNetN: { value: new THREE.Vector3() },
+        uNetA: { value: new THREE.Vector4(1e9, 48, 0, 0) }, uNetL: { value: new THREE.Vector2() },
+        uNetHide: { value: new THREE.Vector4(1, 1, -1, -1) }, uNetHideC: { value: new THREE.Vector4() },
+        uComp: { value: compTex }, uCompA: { value: new THREE.Vector4(MAP_BOUNDS.west, MAP_BOUNDS.north, field.nLon * field.step, field.nLat * field.step) },
+        uNetIdle: { value: new THREE.Color(COLORS.fieldIdle) }, uNetAmber: { value: new THREE.Color(COLORS.amber) }, uNetCyan: { value: new THREE.Color(COLORS.cyan) }, uNetRed: { value: new THREE.Color(COLORS.red) },
       },
       vertexShader: GROUND_VS, fragmentShader: GROUND_FS, extensions: { derivatives: true },
     });
@@ -1642,8 +1746,15 @@ const Scene = (() => {
   }
   let shellGeo = null;
 
+  // distance (hypocentral km) at which the toy amplitude model reaches a level, for magnitude M
+  function reachKm(M, level, pWave) {
+    const lg = -1.9 + 0.5 * M - (pWave ? Math.log10(4) : 0) - Math.log10(level);
+    return Math.max(0, Math.pow(10, lg / 1.3) - 5);
+  }
   function setEvent(ev) {
     disposeFx();
+    const thr = PLAYGROUND.triggerRatio * PLAYGROUND.noiseG, M = isNum(ev.magTrue) ? ev.magTrue : 0;
+    ev.netR = ev.isQuake && M ? [reachKm(M, thr, true), reachKm(M, thr, false), reachKm(M, PLAYGROUND.feltG, false)] : [0, 0, 0];
     const g = new THREE.Group();
     g.position.set(ev.origin.x, 0, ev.origin.z);
     const f = { group: g, ev };
@@ -1686,7 +1797,6 @@ const Scene = (() => {
     if (ev.alert) {
       const nodes = []; for (let i = 0; i < N; i++) nodes.push({ x: ev.nx[i], z: ev.nz[i], t: ev.nodeAlertT[i] });
       f.nodeSparks = makeSparks(nodes, COLORS.cyan, 3.2, 0.0); g.add(f.nodeSparks);
-      if (ev.relayers.length) { f.relaySparks = makeSparks(ev.relayers, COLORS.cyan, 3.6, 0.32); g.add(f.relaySparks); }
     }
     // candidate lattice for the timing check (purely illustrative of a grid search)
     if (ev.best) {
@@ -1725,6 +1835,7 @@ const Scene = (() => {
       const keep = [[0, 0]];
       if (ev.N) keep.push([ev.box.minX, ev.box.minZ], [ev.box.maxX, ev.box.maxZ]);
       for (const c of ev.cities) keep.push([c.x, c.z]);
+      if (ev.floodExtent) keep.push(...ev.floodExtent);   // zoom out far enough to see the whole alert flood
       pts = worldPts(ev, boxPts(ev, keep, 90)); bear = 180; el = 52; rect = 'regional';
     }
     else if (key === 'rupture') {
@@ -1791,12 +1902,14 @@ const Scene = (() => {
   }
   function desiredShot(view) {
     const ev = view.ev, P = view.phaseP;
-    if (ev.live) return ev.waiting ? 'national' : 'live';
-    if (!view.started) return ev.isQuake ? 'rupture' : 'patch';   // a scenario about to play: fly straight in
+    if (ev.waiting) return 'national';
+    if (!view.started) return ev.isQuake ? 'rupture' : 'patch';   // about to play: fly straight in
+    const after = ev.live ? 'live' : 'wedge';                     // after the decision: zoom out for the alert
     const alertShown = ev.alert && (P[5] >= 0.3 || (view.t > ev.alert.t + 1e-6 && !ev.ph[5]));
-    if (alertShown || (ev.alert && view.t > ev.alert.t + 0.02)) return 'wedge';
+    if (alertShown || (ev.alert && view.t > ev.alert.t + 0.02)) return after;
     const f = ev.failed;
-    if (f && P[f.phase] >= 1 && ev.isQuake) return 'wedge';
+    if (f && P[f.phase] >= 1 && ev.isQuake) return after;
+    if (ev.live && (P[2] > 0 || P[3] > 0 || P[4] > 0 || P[5] > 0) && ev.focusPts.length) return 'focus';   // the deciding node's neighbourhood
     if (P[4] > 0 && !(P[5] > 0) && ev.ghostIdx.length >= 3) return 'focus4';
     if (!ev.isQuake && view.t >= ev.tFirst - 1e-6 && ev.trig.length) return 'focus';
     if (ev.isQuake && !(P[1] > 0) && view.t < ev.tFirst) return 'rupture';
@@ -1848,10 +1961,41 @@ const Scene = (() => {
     const fu = field.points.material.uniforms;
     fu.uLive.value = ev.live && !ev.waiting && field.live ? 1 : 0;
     fu.uT.value = view.started ? view.t : -1;
-    fu.uVis.value = ev.live ? 1 - 0.55 * sstep(1500, 6000, D) : 0.7 * sstep(250, 700, D) * (1 - 0.5 * sstep(1500, 6000, D));
+    // zoomed in, the dense lattice in the ground shows the nodes; zoomed out, this national field does
+    fu.uVis.value = sstep(450, 900, D) * (ev.live ? 1 - 0.55 * sstep(1500, 6000, D) : 0.7 * (1 - 0.5 * sstep(1500, 6000, D)));
+    updateNet(view, D);
     if (ev.N) fu.uHide.value.set(ev.origin.x + ev.box.cx, ev.origin.z + ev.box.cz, Math.hypot(ev.box.w, ev.box.h) / 2 + 0.6);
     else fu.uHide.value.set(0, 0, 0);
     if (fx) updateFx(view, D);
+  }
+
+  // the detailed patch is drawn node by node only up close; farther out the ground lattice covers it
+  const patchVis = (D) => 1 - sstep(30, 70, D);
+  function updateNet(view, D) {
+    const ev = view.ev, u = groundMat.uniforms;
+    u.uNet.value.w = shared.uLight.value ? 0.55 : 0.45;
+    u.uNet.value.z = 11 * pxScale;
+    u.uNetT.value = view.started && !ev.waiting ? view.t : -1;
+    if (ev.waiting) {                        // no event: idle nodes anchored to the map
+      u.uNetQ.value.set(0, 1, 1, 0); u.uNetA.value.set(1e9, 48, 0, 0); u.uNetHide.value.set(1, 1, -1, -1); u.uNetO.value.set(0, 0);
+      return;
+    }
+    const ox = ev.origin.x, oz = ev.origin.z;
+    u.uNetO.value.set(ox, oz);
+    // scenarios: only the data's own nodes trigger (the others show the shaking and the ALERT); live: all of them
+    u.uNetQ.value.set(Math.max(ev.depth, 0.01), ev.vp || 6, ev.vs || 3.5, ev.isQuake ? (ev.live ? 1 : 3) : 2);
+    u.uNetR.value.set(...ev.netR);
+    u.uNetN.value.set((ev.footprintM || 0) / 2000, ev.tFirst, ev.noiseDur);
+    if (ev.alert) {
+      u.uNetA.value.set(ev.alert.t, ev.live ? PLAYGROUND.alertKms : (ev.vAlert || PLAYGROUND.alertKms), ev.live ? 0 : (ev.rMax || 0), ev.live ? 1 : 0);
+      u.uNetL.value.set(ox + ev.leader.x, oz + ev.leader.z);
+    } else u.uNetA.value.set(1e9, 48, 0, 0);
+    // under the detailed patch the data's own nodes are drawn (until they fade out with the zoom)
+    if (ev.N) {
+      const b = ev.box, m = 0.12;
+      u.uNetHide.value.set(ox + b.minX - m, oz + b.minZ - m, ox + b.maxX + m, oz + b.maxZ + m);
+      u.uNetHideC.value.set(ox + b.cx, oz + b.cz, ev.live ? PLAYGROUND.fineRadiusKm + 0.1 : 0, patchVis(D));
+    } else u.uNetHide.value.set(1, 1, -1, -1);
   }
 
   function updateFx(view, D) {
@@ -1876,7 +2020,7 @@ const Scene = (() => {
     if (ev.alert && tt >= tA) {
       const R = interpCurve(ev.reach, tt);
       u.uAlertR.value = R !== null ? Math.max(0, R - ev.leaderR) : (ev.vAlert ? (tt - tA) * ev.vAlert : 0);
-      u.uAlertOn.value = sstep(tA, tA + 0.03, tt);
+      u.uAlertOn.value = sstep(tA, tA + 0.03, tt) * (ev.rMax ? 1 - 0.85 * sstep(ev.rMax * 0.9, ev.rMax * 0.99, u.uAlertR.value + ev.leaderR) : 1);
     } else u.uAlertOn.value = 0;
     u.uBlindVis.value = ev.blindR > 0.05 && ev.alert && tt >= tA ? wedgeScale * sstep(tA, tA + 0.6, tt) : 0;
     if (ev.live) { u.uWedgeVis.value = 0; u.uNetVis.value = 0; u.uAlertOn.value = 0; u.uBlindVis.value = 0; }   // the node field shows the flood
@@ -1888,7 +2032,7 @@ const Scene = (() => {
       f.pShell.visible = tt > 0; f.sShell.visible = tt > 0;
       f.pShell.scale.setScalar(Math.max(rp, 1e-3)); f.sShell.scale.setScalar(Math.max(rs, 1e-3));
       const dd = Math.max(ev.depth, 1);
-      const shellK = shared.uLight.value ? 0.5 : 1;     // on the paper map the domes read stronger
+      const shellK = shared.uLight.value ? 0.4 : 1;     // on the paper map the domes read stronger
       f.pShell.material.uniforms.uOpacity.value = 0.32 * shellK * (1 - 0.75 * sstep(dd, 3.5 * dd, rp));
       f.sShell.material.uniforms.uOpacity.value = 0.38 * shellK * (1 - 0.75 * sstep(dd, 3.5 * dd, rs));
     }
@@ -1908,13 +2052,13 @@ const Scene = (() => {
     const dots = f.dots, rings = f.rings, pulses = f.pulses, ghosts = f.ghosts, beams = f.beams, markers = f.markers, lat = f.lattice;
     dots.begin(); rings.begin(); pulses.begin(); ghosts.begin(); beams.begin(); markers.begin(); lat.begin();
 
-    const nodeVis = (1 - sstep(90, 400, D)) * (1 - 0.45 * sstep(25, 90, D));
+    const nodeVis = patchVis(D);
     const fitFade = (ev.alert ? 1 - sstep(tA, tA + 0.35, tt) : 1) * (1 - 0.7 * sstep(0, 0.25, P[4]));
     const ghostFade = ev.alert ? 1 - sstep(tA, tA + 0.3, tt) : 1;
     const p2 = P[2], p4 = P[4];
     for (let i = 0; i < N; i++) {
       const x = ev.nx[i], z = ev.nz[i];
-      let col = C.idle, a = 0.85, size = 0.028;
+      let col = C.idle, a = shared.uLight.value ? 0.6 : 0.85, size = 0.028;
       const ti = ev.trigT[i];
       if (tt >= ti) {
         const age = tt - ti, flash = Math.exp(-age / 0.09);
@@ -2091,7 +2235,7 @@ function landCanvas(rings, w, h, box) {
 // map palettes: light = paper atlas, dark = night map
 const MAP_STYLE = {
   light: {
-    sea0: '#d9e8f2', sea1: '#c9dce9', shelf: 'rgba(236,245,250,0.75)', other: '#e1dfd8', land0: '#f8f4ea', land1: '#f1eadb',
+    sea0: '#d9e8f2', sea1: '#c9dce9', shelf: 'rgba(236,245,250,0.75)', other: '#e1dfd8', land0: '#f7f4ec', land1: '#f0ebe1',
     coast: 'rgba(84,118,150,0.9)', coastGlow: 'rgba(84,118,150,0.25)', coastBlur: 3,
   },
   dark: {
@@ -2153,7 +2297,8 @@ function drawProceduralMap() {
   const mkc = mk(4096, Math.round(4096 * latSpan / lonSpan)), mg = mkc.getContext('2d');
   mg.fillStyle = '#000'; mg.fillRect(0, 0, mkc.width, mkc.height);
   mg.save(); mg.scale(mkc.width / W, mkc.height / H);
-  mg.fillStyle = '#f00'; ringsPath(mg, all, X, Y); mg.fill();
+  mg.fillStyle = 'rgb(128,0,0)'; ringsPath(mg, mapGeo().oth, X, Y); mg.fill();   // other land: half (relief only)
+  mg.fillStyle = 'rgb(255,0,0)'; ringsPath(mg, mapGeo().idn, X, Y); mg.fill();   // Indonesia: full (relief + nodes)
   mg.globalCompositeOperation = 'lighter';
   mg.save(); ringsPath(mg, mapGeo().idn, X, Y); mg.clip();
   mg.strokeStyle = 'rgb(0,0,255)'; mg.lineWidth = 1.6; mg.lineJoin = 'round'; mg.setLineDash([7, 5]);
@@ -2216,7 +2361,7 @@ const Playground = (() => {
       for (let k = 0; k < field.n; k++) { const d = Math.hypot(field.x[k] - E.x, field.z[k] - E.z); if (d < bd) { bd = d; best = k; } }
       if (best >= 0) { cx = field.x[best]; cz = field.z[best]; }
     }
-    const R = P.fineRadiusKm, sp = P.fineSpacingKm, half = R + 1, res = 4;     // 4 px per km
+    const R = P.fineRadiusKm, sp = P.fineSpacingKm, half = R + 1, res = 10;    // 10 px per km
     const c = worldToGeo(cx, cz);
     const box = { west: c.lon - half / GEO.kx, east: c.lon + half / GEO.kx, south: c.lat - half / GEO.ky, north: c.lat + half / GEO.ky };
     const wpx = Math.round(2 * half * res);
@@ -2355,8 +2500,11 @@ const Playground = (() => {
       }
       const cellKm2 = (field.step * GEO.kx) * (field.step * GEO.ky);
       const recv = [];
+      const ext = [Infinity, Infinity, -Infinity, -Infinity];
       for (let k = 0; k < N; k++) {
         if (!comp[k]) continue;
+        const ex = field.x[k] - E.x, ny = -(field.z[k] - E.z);
+        ext[0] = Math.min(ext[0], ex); ext[1] = Math.min(ext[1], ny); ext[2] = Math.max(ext[2], ex); ext[3] = Math.max(ext[3], ny);
         const t = tA + Math.hypot(field.x[k] - L.x, field.z[k] - L.z) / P.alertKms + 0.03 * hash(k, seed + 21);
         fAlert[k] = t;
         recv.push([t, Math.hypot(field.x[k] - E.x, field.z[k] - E.z), k]);
@@ -2370,6 +2518,7 @@ const Playground = (() => {
         flood.reach_curve.push([r3(t), r2(reach)]);
       }
       flood.r_max_km = r2(reach);
+      if (Number.isFinite(ext[0])) flood.extent_km = ext.map(r2);
       for (let s2 = 0; s2 < Math.min(700, recv.length); s2++) {
         const [t, , k] = recv[Math.floor(hash(s2, seed + 31) * recv.length)];
         flood.relayer_sample.push({ x_km: r2(field.x[k] - E.x), y_km: r2(-(field.z[k] - E.z)), t_s: r3(t) });
@@ -2408,7 +2557,7 @@ const Playground = (() => {
       patch: nodes.map((n) => ({ id: n.id, x_m: Math.round(n.x * 1000), y_m: Math.round(n.y * 1000) })),
       triggers: trig.map((t) => ({ node: t.n.id, t_s: r3(t.t), wave: t.wave })),
       phases, alert,
-      flood: { wedge_deg: 360, r_max_km: flood.r_max_km, reach_curve: flood.reach_curve, relayer_sample: flood.relayer_sample },
+      flood: { wedge_deg: 360, r_max_km: flood.r_max_km, reach_curve: flood.reach_curve, relayer_sample: flood.relayer_sample, extent_km: flood.extent_km },
       cities,
     };
     return { raw, fieldTimes: { trig: fTrig, alert: fAlert, s: fS } };
@@ -2575,7 +2724,7 @@ const UI = (() => {
     return L;
   }
   // scenario pins show while nothing is running (or when zoomed far out)
-  const pinVis = (v, D) => (D > 300 && (!v.busy || D > 2500) ? 1 : 0);
+  const pinVis = (v, D) => (D > 300 && !v.busy ? 1 : 0);
   function buildLabels(e) {
     el.labels.innerHTML = ''; labels = [];
     gratEls = []; provEls = [];
@@ -2617,7 +2766,7 @@ const UI = (() => {
     }
     e.cities.forEach((c) => {
       const L = addLabel('white city-lbl', `<svg class="mini" viewBox="0 0 36 36"><circle class="mbg" cx="18" cy="18" r="14"/><circle class="mfg" cx="18" cy="18" r="14" stroke="currentColor" stroke-dasharray="87.96" stroke-dashoffset="87.96"/></svg><span>City ${fmt(c.dist, 0)} km</span><span class="warn"></span>`,
-        () => [c.x, 0, c.z], (v, D) => (v.started ? sstep(20, 45, D) : 0), 26);
+        () => [c.x, 0, c.z], (v, D) => (v.started ? sstep(20, 45, D) * (1 - sstep(700, 1000, D)) : 0), 26);
       L.city = c; L.ring = L.el.querySelector('.mfg'); L.warn = L.el.querySelector('.warn'); L.state = null;
     });
   }
@@ -2847,40 +2996,34 @@ const UI = (() => {
     return { text: '', cls: '' };
   }
   const NONE = { text: '', cls: '' };
-  function liveCaption(view) {
-    const t = view.started ? view.t : 0;
-    if (ev.waiting) {
-      return { key: `pg-wait-${App.pg.mag}-${App.pg.depth}`, eyebrow: 'Live playground', title: 'Click anywhere on the map to start an earthquake',
-        sub: `Next one: M ${fmt(App.pg.mag)}, ${App.pg.depth} km deep. Or click a pin to play a prepared scenario.`, result: NONE };
-    }
-    const eyebrow = `Live · M ${fmt(ev.magTrue)} · ${fmt(ev.depth, 0)} km deep`;
-    const ended = view.mode === 'ended';
-    const fin = ended ? ' Click the map for another one.' : '';
+  const liveEyebrow = () => `Live · M ${fmt(ev.magTrue)} · ${fmt(ev.depth, 0)} km deep`;
+  function liveResult(view) {
+    const t = view.t, ended = view.mode === 'ended';
+    const eyebrow = liveEyebrow(), fin = ended ? ' Click the map for another one.' : '';
     if (ev.alert && t >= ev.alert.t) {
       return { key: `pg-alert-${ended}`, eyebrow, title: ended ? 'Done: the alert reached the whole island' : 'Alert sent: it spreads across the island',
         sub: `Blue dots got the alert before the shaking; red dots felt the shaking first. Radio cannot cross the sea.${fin}`,
         result: { text: `ALERT sent at ${fmt(ev.alert.t, 2)} s`, cls: 'alert' } };
     }
-    if (ev.failed && t >= num(ev.failed.t_s, 0)) {
-      return { key: `pg-fail-${ended}`, eyebrow, title: ended ? 'Done: no alert was sent' : 'No alert', sub: `${stopText(ev.failed.phase)}${fin}`, result: NONE };
-    }
-    if (ev.trig.length && t >= ev.tFirst) {
-      return { key: 'pg-detect', eyebrow, title: 'The nodes are detecting it',
-        sub: `Each node that triggers tells its neighbours; with ${METHOD.minTriggers} triggers a node runs the checks.`,
-        result: { text: `${fmtInt(countLE(ev.trigTimes, t))} nodes triggered`, cls: '' } };
-    }
-    return { key: 'pg-start', eyebrow, title: 'Earthquake! The waves spread out', sub: 'Blue ring: the fast, weak P wave. Orange ring: the slow, damaging S wave.', result: NONE };
+    const fp = ev.failed ? ev.failed.phase : 1;
+    return { key: `pg-fail-${ended}`, eyebrow, title: ended ? 'Done: no alert was sent' : 'No alert', sub: `${stopText(fp)}${fin}`, result: NONE };
   }
   function captionFor(view) {
-    if (ev.live) return liveCaption(view);
+    if (ev.waiting) {
+      return { key: `pg-wait-${App.pg.mag}-${App.pg.depth}`, eyebrow: 'Live playground', title: 'Click anywhere on the map to start an earthquake',
+        sub: `Next one: M ${fmt(App.pg.mag)}, ${App.pg.depth} km deep. Or click a pin to play a prepared scenario.`, result: NONE };
+    }
     const t = view.t;
-    if (!view.started) return { key: `idle-${ev.index}`, eyebrow: ev.isQuake ? 'Scenario' : 'Scenario · not an earthquake', title: esc(ev.label), sub: esc(ev.description), result: NONE };
+    if (!view.started) {
+      if (ev.live) return { key: 'live-idle', eyebrow: liveEyebrow(), title: `Earthquake at ${fmtLat(ev.lat, 2)}, ${fmtLon(ev.lon, 2)}`, sub: 'Zooming in to watch the nodes detect it, step by step.', result: NONE };
+      return { key: `idle-${ev.index}`, eyebrow: ev.isQuake ? 'Scenario' : 'Scenario · not an earthquake', title: esc(ev.label), sub: esc(ev.description), result: NONE };
+    }
     let k = 0;
     for (let j = 1; j <= 5; j++) if (view.phaseP[j] > 0 || view.hold === j) k = j;
     const last = ev.lastPhase ? ev.lastPhase.phase : 0;
     const pipelineDone = last && view.phaseP[last] >= 1 && view.hold === null;
     if (k === 0) {
-      if (ev.isQuake) return { key: 'rupture', eyebrow: 'Rupture', title: `The fault slips ${fmt(ev.depth, 0)} km underground`, sub: 'Blue ring: the fast, weak P wave. Orange ring: the slow, damaging S wave.', result: NONE };
+      if (ev.isQuake) return { key: 'rupture', eyebrow: ev.live ? liveEyebrow() : 'Rupture', title: ev.live ? 'Earthquake! The waves spread out' : `The fault slips ${fmt(ev.depth, 0)} km underground`, sub: 'Blue ring: the fast, weak P wave. Orange ring: the slow, damaging S wave.', result: NONE };
       return { key: 'disturb', eyebrow: 'Not an earthquake', title: 'Something shakes the ground', sub: 'Is it an earthquake? The nodes must decide on their own, with no server.', result: NONE };
     }
     if (!pipelineDone) {
@@ -2889,6 +3032,7 @@ const UI = (() => {
       const sub = k === 3 ? `${SUBS[3]} Alerts start at M ${fmt(ev.gate)}.` : SUBS[k];
       return { key: `phase-${k}`, eyebrow: `Step ${k} of 5`, title: STEP_TITLE[k], sub, result: res };
     }
+    if (ev.live) return liveResult(view);
     const ended = view.mode === 'ended' || t >= ev.tEnd - 1e-3;
     const fin = ended ? ' Click the map for a live quake.' : '';
     if (ev.outcome === 'detected' || ev.outcome === 'false-alarm') {
@@ -3104,8 +3248,8 @@ const App = {
     this.prevT = null; this.prevP = null;
     Scene.rig.manual = false;
   },
-  // one earthquake at a time: map and pin clicks wait until the current one has finished
-  locked() { return !this.ev.waiting && Playback.started && Playback.mode !== 'ended'; },
+  // one earthquake at a time: map and pin clicks wait until the current one has finished (or press R)
+  locked() { return !!this.autoStart || (!this.ev.waiting && Playback.started && Playback.mode !== 'ended'); },
   mapClick(cx, cy) {
     if (this.locked()) { UI.toast(LOCK_MSG); return; }
     const g = Scene.groundAtClient(cx, cy);
@@ -3119,7 +3263,7 @@ const App = {
     const { raw, fieldTimes } = Playground.simulate(lon, lat, this.pg.mag, this.pg.depth, Scene.field);
     this.loadLive(raw);
     Scene.setFieldTimes(fieldTimes.trig, fieldTimes.alert, fieldTimes.s);
-    Playback.play();
+    this.autoStart = { t: 0 };      // fly in first, then the earthquake starts
   },
   /* ----- playback ----- */
   runToggle() {

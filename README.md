@@ -19,6 +19,21 @@ for a 75-second live demo on a 16:9 projector. Open it in Chrome or Edge and pre
 Mouse: drag to orbit, right-drag (or Shift+drag) to pan, wheel to zoom towards the cursor.
 **R** or the "Auto camera" chip returns to the choreographed camera.
 
+## Playground (live toy model)
+
+Choose the last card, **Playground**, pick a magnitude and depth, then click anywhere on the
+map. An earthquake starts there and runs in real time: the national node field (one dot per
+~5 km cell of the hypothetical 200 m network, about 78,000 dots, drawn entirely on the GPU)
+lights up amber where nodes trigger, cyan where the ALERT arrives, and red where the S wave
+arrives first (no warning). The ALERT floods only over connected land, because the radio mesh
+cannot cross open sea. A detailed 0.5 km patch around the epicentre runs the same five checks as
+the scenarios. Only one earthquake at a time: the map is locked until it finishes (or press **R**).
+
+The playground uses the same toy physics as `tools/make_placeholder_events.mjs`. It is a
+teaching toy, not the real simulation, and it is labelled LIVE TOY MODEL on screen.
+
+## Map
+
 Map mode: zoom out (or press **O**) to see all of Indonesia. A latitude / longitude grid
 adapts to the zoom level (5° on the overview, down to 0.01° on the sensor patch), its
 values are labelled along the top and left edges of the map, the bottom-right corner shows
@@ -49,7 +64,9 @@ For a venue without internet, paste the content of
 its `<script src>` tag. The comment at the top of `index.html` has the exact steps. Without
 the fonts, the page falls back to system fonts.
 
-## Map
+The map is drawn from embedded geometry: Natural Earth 1:10m coastlines and neighbouring
+countries (public domain, via the `world-atlas` npm package) and Indonesia's 38 provinces
+(`indonesia-geodata` npm package, MIT). `tools/make_geo_data.py` rebuilds that block.
 
 Set `MAP_IMAGE` (top of the script) to an equirectangular image covering `MAP_BOUNDS`
 (94°E to 142°E, 11.5°S to 6.5°N). Use a `data:` URI when opening the file from disk;

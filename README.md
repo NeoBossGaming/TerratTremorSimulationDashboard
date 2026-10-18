@@ -66,12 +66,23 @@ The default is a light "atlas" look. `THEME` at the top of the script sets the s
 
 The hypothetical network (one node every 200 m on Indonesian land) is drawn on the GPU at
 every zoom level: up close you see every node; as the camera zooms out the dots thin out, and
-each one stands for the nodes around it. Nodes light up amber when they trigger, blue when the
-ALERT reaches them, and red where the S wave arrives first (no warning).
+each one stands for the nodes around it.
+
+Only the S wave is drawn and used: the nodes detect the strong shaking of the S wave, not the
+earlier, weaker P wave. Node colours:
+
+* **Orange**: the node triggered (shaking above 4× its background) before any ALERT reached it,
+  so it helped detect the quake. It stays orange.
+* **Blue**: the ALERT reached the node before the S wave. It stays blue when the shaking arrives
+  (the node was warned).
+* **Red**: the S wave reached the node before the ALERT (no warning).
 
 In the scenarios, the nodes of the data patch are drawn from the data; the nodes around them
-follow the same toy wave model (P and S speeds, the amplitude needed to trigger) and the
+follow the same toy wave model (S-wave speed and the amplitude needed to trigger) and the
 ALERT's reach curve from the data, up to the distance the data covers (dashed circle).
+
+The virtual cities show their warning seconds (+X s) only from 60 km out
+(`CITY_SECONDS_FROM_KM`). Closer in, the S wave arrives about when the ALERT does.
 
 ## Live playground (toy model)
 
@@ -110,9 +121,14 @@ epicentre (or disturbance source). `patch`, `best_x_m/best_y_m` and `alert.estim
 metres; `flood.relayer_sample` and `cities` are in km; `reach_km` is the farthest distance
 from the epicentre that the ALERT has reached at `t_s`.
 
+`wave_speeds.detect` names the wave the nodes detect (`"S"`, the default if it is missing, or
+`"P"`). The timing-check picture uses that wave's speed (`s_kms` or `p_kms`) to draw the
+arrival times each guess predicts.
+
 The current placeholder data comes from `tools/make_placeholder_events.mjs`, a small,
 seeded toy version of the five-phase pipeline (so the numbers are consistent with each
-other). It is not the real simulation. Running `node tools/make_placeholder_events.mjs`
+other). Its nodes trigger on the S wave only, and the timing check, size estimate and
+neighbour check all use the S wave. It is not the real simulation. Running `node tools/make_placeholder_events.mjs`
 regenerates the block in `index.html`.
 
 ## Offline use

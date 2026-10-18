@@ -25,6 +25,10 @@ import { fileURLToPath } from 'node:url';
 
 // ---------- toy model parameters ----------
 const VP = 6.0, VS = 3.5;            // km/s
+// The nodes detect the S wave only (the strong shaking): triggers, the timing check and the
+// neighbour check all use the S-wave speed and the S-wave amplitude law. VP is kept in the data
+// for reference only.
+const DETECT = 'S';
 const ALERT_KMS = 48;                // effective speed of the radio flood, km/s
 const SPACING_M = 200, GRID_N = 32;  // 32 x 32 grid, a few nodes randomly missing
 const TRIGGER_RATIO = 4;             // trigger when signal > 4x background
@@ -40,26 +44,25 @@ const CITY_DISTS = [10, 20, 40, 60, 80, 100];
 const CITY_BEARING_OFFSETS = [-7, 5, -3, 8, -5, 2];
 const RELAYER_SAMPLE = 600;
 
-// toy amplitude model: peak ground acceleration in g at hypocentral distance R (km)
+// toy amplitude model: S-wave peak ground acceleration in g at hypocentral distance R (km)
 const logAS = (M, R) => -1.9 + 0.5 * M - 1.3 * Math.log10(R + 5);
-const logAP = (M, R) => logAS(M, R) - Math.log10(4);
 
 // ---------- the six presets ----------
 const SPECS = [
   {
     id: 'PLACEHOLDER-A', label: 'Large shallow earthquake', kind: 'earthquake', expect: 'detected',
-    description: 'Strong, shallow quake: the network triggers within a second and the alert outruns the shaking.',
+    description: 'Strong, shallow quake: the S wave reaches the network after 3 s, and the alert outruns it to the far cities.',
     lat: -7.05, lon: 107.55, depth: 10, M: 6.6, bearing: 85, patchDist: 6, seed: 18, spurious: 2,
   },
   {
     id: 'PLACEHOLDER-B', label: 'Moderate earthquake', kind: 'earthquake', expect: 'detected',
-    description: 'The network is 18 km away, so the P wave reaches it later: later alert, shorter warnings.',
+    description: 'The network is 18 km away, so the S wave reaches it later: later alert, shorter warnings.',
     lat: -1.25, lon: 120.15, depth: 8, M: 5.4, bearing: 170, patchDist: 18, seed: 21, spurious: 1,
   },
   {
     id: 'PLACEHOLDER-C', label: 'Small earthquake', kind: 'earthquake', expect: 'missed',
     description: 'Size is underestimated, just below the M 4.5 gate, so no alert is sent. An honest miss.',
-    lat: -0.65, lon: 100.55, depth: 12, M: 4.7, bearing: 135, patchDist: 4, seed: 27, spurious: 1,
+    lat: -0.65, lon: 100.55, depth: 12, M: 4.7, bearing: 135, patchDist: 4, seed: 21, spurious: 1,
   },
   {
     id: 'PLACEHOLDER-D', label: 'Footsteps', kind: 'noise', expect: 'rejected-2',
@@ -69,12 +72,12 @@ const SPECS = [
   {
     id: 'PLACEHOLDER-E', label: 'Machine / grinder', kind: 'noise', expect: 'rejected-4',
     description: 'A grinder shakes a few nodes hard. It looks big, but most neighbours stay quiet.',
-    lat: -7.32, lon: 112.62, footprint: 400, A0: 0.30, tOn: 0.3, sourceNear: 0, bearing: 90, seed: 2,
+    lat: -7.32, lon: 112.62, footprint: 400, A0: 0.45, decayM: 60, tOn: 0.3, sourceNear: 0, bearing: 90, seed: 2,
   },
   {
     id: 'PLACEHOLDER-F', label: '500 m-wide shaking', kind: 'noise', expect: 'false-alarm',
     description: 'Heavy shaking over a 500 m area (e.g. construction): locally it looks just like an earthquake.',
-    lat: -8.62, lon: 116.25, footprint: 500, A0: 0.35, tOn: 0.3, sourceNear: 0, bearing: 95, seed: 21,
+    lat: -8.62, lon: 116.25, footprint: 500, A0: 0.45, decayM: 60, tOn: 0.3, sourceNear: 0, bearing: 95, seed: 4,
   },
 ];
 
@@ -149,18 +152,19 @@ function simulate(spec) {
     const pick = 0.04 + 0.06 * rnd() + 0.012 * gau();
     if (quake) {
       const R = Math.hypot(n.x, n.y, spec.depth);
-      const aP = Math.pow(10, logAP(spec.M, R)) * n.site * scatter;
       const aS = Math.pow(10, logAS(spec.M, R)) * n.site * scatter;
-      if (aP >= thr) trig.push({ n, t: R / VP + pick, wave: 'P', amp: aP });
-      else if (aS >= thr) trig.push({ n, t: R / VS + pick, wave: 'S', amp: aS });
+      if (aS >= thr) trig.push({ n, t: R / VS + pick, wave: 'S', amp: aS });
     } else {
       const d = Math.hypot(n.x, n.y) * 1000;
-      // strong inside the footprint (0.04 g at its edge), decaying quickly outside it
-      const a = spec.A0 * Math.pow(0.04 / spec.A0, d / (spec.footprint / 2)) * n.site * scatter;
+      // footsteps: strongest at the source, 0.04 g at the footprint edge, decaying quickly outside it.
+      // machines / construction (decayM set): A0 over the whole footprint, then 10x weaker every decayM metres
+      const a = (spec.decayM
+        ? spec.A0 * Math.pow(10, -Math.max(0, d - spec.footprint / 2) / spec.decayM)
+        : spec.A0 * Math.pow(0.04 / spec.A0, d / (spec.footprint / 2))) * n.site * scatter;
       if (a >= thr) trig.push({ n, t: spec.tOn + d / 1500 + 0.03 * rnd(), wave: 'noise', amp: a });
     }
   }
-  // a few nodes pick the P wave late (emergent onset / poor clock sync): these become mismatches
+  // a few nodes pick the S wave late (emergent onset / poor clock sync): these become mismatches
   if (quake && spec.spurious) {
     const early = [...trig].sort((a, b) => a.t - b.t).slice(5, 60);
     for (let k = 0; k < spec.spurious; k++) {
@@ -215,7 +219,7 @@ function simulate(spec) {
           for (let dz = 1; dz <= 39; dz += 2) {
             tested++;
             const ex = cx + ix, ey = cy + iy;
-            const res = heldSet.map((o) => o.t - Math.hypot(o.n.x - ex, o.n.y - ey, dz) / VP);
+            const res = heldSet.map((o) => o.t - Math.hypot(o.n.x - ex, o.n.y - ey, dz) / VS);
             const tz = median(res);
             let nfit = 0, ss = 0;
             for (const v of res) { const e = v - tz; if (Math.abs(e) <= FIT_TOL_S) { nfit++; ss += e * e; } }
@@ -227,7 +231,7 @@ function simulate(spec) {
       t0 = best.t0;
       const fit = [], mis = [];
       for (const o of heldSet) {
-        const e = o.t - Math.hypot(o.n.x - best.ex, o.n.y - best.ey, best.dz) / VP - t0;
+        const e = o.t - Math.hypot(o.n.x - best.ex, o.n.y - best.ey, best.dz) / VS - t0;
         (Math.abs(e) <= FIT_TOL_S ? fit : mis).push(o);
       }
       const ratio = fit.length / heldSet.length;
@@ -253,7 +257,7 @@ function simulate(spec) {
     let bestErr = Infinity;
     for (let k = 0; k <= 60; k++) {
       const M = r1(3 + k * 0.1);
-      const err = Math.sqrt(obs.reduce((s, o) => s + (o.la - logAP(M, o.R)) ** 2, 0) / obs.length);
+      const err = Math.sqrt(obs.reduce((s, o) => s + (o.la - logAS(M, o.R)) ** 2, 0) / obs.length);
       curve.push([M, r3(err)]);
       if (err < bestErr) { bestErr = err; mHat = M; }
     }
@@ -276,8 +280,8 @@ function simulate(spec) {
     const silent = [];
     for (const n of nb) {
       const R = Math.hypot(n.x - best.ex, n.y - best.ey, best.dz);
-      const arrives = t0 + R / VP + 0.07 <= T4;
-      const p = arrives ? Phi((logAP(mHat, R) - Math.log10(TRIGGER_RATIO * n.noise)) / 0.25) : 0;
+      const arrives = t0 + R / VS + 0.07 <= T4;
+      const p = arrives ? Phi((logAS(mHat, R) - Math.log10(TRIGGER_RATIO * n.noise)) / 0.25) : 0;
       E += p;
       if (trigBy.has(n.id)) O++;
       else if (p >= 0.1) silent.push({ node: n.id, p: r2(p) });
@@ -357,7 +361,7 @@ function simulate(spec) {
 
   const ev = {
     id: spec.id, placeholder: true, label: spec.label, kind: spec.kind, description: spec.description,
-    source, wave_speeds: { p_kms: VP, s_kms: VS },
+    source, wave_speeds: { p_kms: VP, s_kms: VS, detect: DETECT },
     patch: nodes.map((n) => ({ id: n.id, x_m: Math.round(n.x * 1000), y_m: Math.round(n.y * 1000) })),
     triggers: trig.map((t) => ({ node: t.n.id, t_s: r3(t.t), wave: t.wave })),
     phases, alert, flood, cities,

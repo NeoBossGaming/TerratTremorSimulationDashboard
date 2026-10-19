@@ -170,7 +170,7 @@ ol,ul{list-style:none}
 .ins-chart .c-pt.fit{fill:var(--green);opacity:1}
 .ins-chart .c-best{fill:var(--green)}
 .ins-chart .c-warn{fill:color-mix(in srgb,var(--cyan) 35%,transparent)} .ins-chart .c-late{fill:color-mix(in srgb,var(--red) 35%,transparent)}
-.ins-chart .c-alert{fill:var(--cyan)} .ins-chart .c-shake{fill:var(--orange)}
+.ins-chart .c-alert{fill:var(--cyan)} .ins-chart .c-shake{fill:var(--red)}
 .ins-chart .c-now{stroke:var(--ink);stroke-width:1.2;stroke-dasharray:2 2}
 .slots{display:flex;gap:5px}
 .slots i,.waffle i{width:12px;height:12px;border-radius:50%;border:1.5px dashed var(--ink-3);display:block}
@@ -443,8 +443,8 @@ const THEME = 'light';
 const THEMES = {
   light: {
     bg: '#e8eef3', sea: '#cddfeb', fog: '#e3ebf1', orange: '#e2600a', amber: '#c98000', cyan: '#0877bd', green: '#0f8f58', red: '#d3303a',
-    swave: '#e2600a', white: '#2b3b4d', idle: '#5a6d84', grid: '#4f6c88', dust: '#a87c50',
-    fieldIdle: '#7084a0', shake: '#ff5a00', grat: '#46678a', label: '#8aa0b6', prov: '#9a7046',
+    swave: '#d3303a', white: '#2b3b4d', idle: '#5a6d84', grid: '#4f6c88', dust: '#a87c50',
+    fieldIdle: '#7084a0', shake: '#ff3b45', grat: '#46678a', label: '#8aa0b6', prov: '#9a7046',
     ramp0: '#f0b400', ramp1: '#e8670e', ramp2: '#a3291c',
     sea0: '#d9e8f2', sea1: '#c9dce9', shelf: '#eef6fb', land0: '#f7f4ec', land1: '#f0ebe1', other: '#e1dfd8', coast: '#56789a', glow: '#ffffff',
     mapK: [0.75, 0.9, 0],          // shallow-shelf tint, coastline, coast glow
@@ -452,8 +452,8 @@ const THEMES = {
   },
   dark: {
     bg: '#05080f', sea: '#0a111e', fog: '#05080f', orange: '#ff9f43', amber: '#ffc062', cyan: '#4cc9f0', green: '#52d6a0', red: '#ff5a5f',
-    swave: '#ff9f43', white: '#f2f6fc', idle: '#8d9ab6', grid: '#8aa2c4', dust: '#e8bf92',
-    fieldIdle: '#6f7f9e', shake: '#ffe2b8', grat: '#809fd1', label: '#9eb0cc', prov: '#7d93ba',
+    swave: '#ff5a5f', white: '#f2f6fc', idle: '#8d9ab6', grid: '#8aa2c4', dust: '#e8bf92',
+    fieldIdle: '#6f7f9e', shake: '#ffc4c6', grat: '#809fd1', label: '#9eb0cc', prov: '#7d93ba',
     ramp0: '#ffe27a', ramp1: '#ff9f43', ramp2: '#ff5a4e',
     sea0: '#0d1626', sea1: '#0a111e', shelf: '#3c6eaf', land0: '#222b3d', land1: '#1b2232', other: '#151b27', coast: '#b8ceee', glow: '#8cb4eb',
     mapK: [0.22, 0.8, 0.35],
@@ -2391,7 +2391,7 @@ const Scene = (() => {
       markers.push(c.x, 0, c.z, 0.45, col, a, STYLE.DISC, 7);
       markers.push(c.x, 0, c.z, 0.8, col, a * 0.85, STYLE.RING, 12);
       beams.push(c.x, 0, c.z, 2.5, col, 0.85 * a, 0.04, 2.0, 36);
-      if (c.tS !== null && tt >= c.tS && tt < c.tS + 1.4) { const k = (tt - c.tS) / 1.4; markers.push(c.x, 0, c.z, 0.8 + 7 * easeOut(k), C.orange, (1 - k) * 1.4 * cityVis, STYLE.RING, 0); }
+      if (c.tS !== null && tt >= c.tS && tt < c.tS + 1.4) { const k = (tt - c.tS) / 1.4; markers.push(c.x, 0, c.z, 0.8 + 7 * easeOut(k), C.red, (1 - k) * 1.4 * cityVis, STYLE.RING, 0); }
       if (c.tA !== null && tt >= c.tA && tt < c.tA + 0.9) { const k = (tt - c.tA) / 0.9; markers.push(c.x, 0, c.z, 0.8 + 4 * easeOut(k), C.cyan, (1 - k) * 1.2 * cityVis, STYLE.RING, 0); }
     }
 
@@ -3472,7 +3472,7 @@ const UI = (() => {
     const last = ev.lastPhase ? ev.lastPhase.phase : 0;
     const pipelineDone = last && view.phaseP[last] >= 1 && view.hold === null;
     if (k === 0) {
-      if (ev.isQuake) return { key: 'rupture', eyebrow: ev.live ? liveEyebrow() : 'Rupture', title: ev.live ? 'Earthquake! The waves spread out' : `The fault slips ${fmt(ev.depth, 0)} km underground`, sub: 'Orange ring: the S wave, the strong shaking. The nodes detect this wave.', result: NONE };
+      if (ev.isQuake) return { key: 'rupture', eyebrow: ev.live ? liveEyebrow() : 'Rupture', title: ev.live ? 'Earthquake! The waves spread out' : `The fault slips ${fmt(ev.depth, 0)} km underground`, sub: 'Red ring: the S wave, the strong shaking. The nodes detect this wave.', result: NONE };
       return { key: 'disturb', eyebrow: 'Not an earthquake', title: 'Something shakes the ground', sub: 'Is it an earthquake? The nodes must decide on their own, with no server.', result: NONE };
     }
     if (!pipelineDone) {
@@ -3637,7 +3637,7 @@ const UI = (() => {
         <div class="ins-row" style="margin-top:0"><span>${ev.alert ? 'Relayed by radio from node to node' : 'No alert'}</span>${isNum(ev.relayersCount) ? `<span><b class="mono">${fmtInt(ev.relayersCount)}</b> nodes</span>` : ''}</div>
         ${rows.length ? `<svg class="ins-chart" viewBox="0 0 368 ${rows.length * 24 + 20}" aria-hidden="true" style="margin-top:6px">${rowSvg}
           <line id="ins-now" x1="92" x2="92" y1="2" y2="${rows.length * 24 + 4}" class="c-now"/>
-          <text x="92" y="${rows.length * 24 + 17}" class="c-lbl"><tspan class="c-blue">◆</tspan> alert arrives   <tspan class="c-orange">●</tspan> shaking arrives   gap = warning</text>
+          <text x="92" y="${rows.length * 24 + 17}" class="c-lbl"><tspan class="c-blue">◆</tspan> alert arrives   <tspan class="c-red">●</tspan> shaking arrives   gap = warning</text>
         </svg>` : ''}`;
       instGauge = { k: 5, X, tMax };
     }

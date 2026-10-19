@@ -64,7 +64,8 @@ The default is a light "atlas" look. `THEME` at the top of the script sets the s
 
 ## The node network on the map
 
-The hypothetical network (one node every 200 m on Indonesian land) is drawn on the GPU at
+The hypothetical network (by default one node every 500 m on Indonesian land, each placed within
+20 m of its grid point) is drawn on the GPU at
 every zoom level: up close you see every node; as the camera zooms out the dots thin out, and
 each one stands for the nodes around it.
 
@@ -86,8 +87,12 @@ The virtual cities show their warning seconds (+X s) only from 60 km out
 
 ## Live playground (toy model)
 
-A detailed 200 m patch (8 km radius) around the epicentre runs the same five checks as the
-scenarios. The ALERT then floods only over connected land, because the radio mesh cannot
+The **Nodes every** slider in the bottom bar sets the distance between nodes for the next
+earthquake you click (100 m to 1 km, default 500 m; `NETWORK` at the top of the script). Before a
+click, the map shows the network at that spacing. A detailed patch of nodes at that spacing (8 km
+radius, smaller for very dense networks) around the epicentre runs the same five checks as the
+scenarios. The neighbour check looks 2.25 node spacings around the deciding node (1.1 km at 500 m),
+so it always has about 15 neighbours to ask. The ALERT then floods only over connected land, because the radio mesh cannot
 cross open sea, and only up to 200 km from the epicentre (`PLAYGROUND.alertRangeKm`; the
 virtual cities sit within 100 km). After the alert the camera frames about that area, not the
 whole island. After the last city has been hit, the rest plays at 4× speed (the clock says
@@ -124,6 +129,10 @@ from the epicentre that the ALERT has reached at `t_s`.
 `wave_speeds.detect` names the wave the nodes detect (`"S"`, the default if it is missing, or
 `"P"`). The timing-check picture uses that wave's speed (`s_kms` or `p_kms`) to draw the
 arrival times each guess predicts.
+
+`spacing_m` (optional) is the distance between the patch's nodes; without it the dashboard measures
+it from the patch. The network drawn around the patch uses that spacing. Phase 4's
+`metrics.radius_m` (optional) is the neighbour check's radius, drawn on the map in step 4.
 
 The current placeholder data comes from `tools/make_placeholder_events.mjs`, a small,
 seeded toy version of the five-phase pipeline (so the numbers are consistent with each

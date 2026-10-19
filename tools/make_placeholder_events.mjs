@@ -30,14 +30,15 @@ const VP = 6.0, VS = 3.5;            // km/s
 // for reference only.
 const DETECT = 'S';
 const ALERT_KMS = 48;                // effective speed of the radio flood, km/s
-const SPACING_M = 200, GRID_N = 32;  // 32 x 32 grid, a few nodes randomly missing
+const SPACING_M = 500, GRID_N = 32;  // 32 x 32 grid, a few nodes randomly missing
+const JITTER_M = 20;                 // each node sits up to 20 m off its grid point
 const TRIGGER_RATIO = 4;             // trigger when signal > 4x background
 const NOISE_FLOOR_G = 0.004;         // typical background of an ADXL345 in a building
 const HOLD_RADIUS_KM = 2.5;          // a node hears triggers from nodes this close
 const COLLECT_S = 0.6;               // once 5 triggers are held, gather a little longer
 const MIN_TRIGGERS = 5, FIT_TOL_S = 0.3, FIT_RATIO = 0.7;
 const M_GATE = 4.5, OE_GATE = 0.5;
-const NB_RADIUS_KM = 0.45;           // neighbourhood used by the O/E check
+const NB_RADIUS_KM = 2.25 * SPACING_M / 1000;   // neighbourhood used by the O/E check (2.25 node spacings)
 const RELAY_ALL_KM = 3, RELAYERS_PER_NB = 8, GOSSIP_NB_KM = 1.0;
 const WEDGE_DEG = 60, R_MAX_KM = 110;
 const CITY_DISTS = [10, 20, 40, 60, 80, 100];
@@ -62,7 +63,7 @@ const SPECS = [
   {
     id: 'PLACEHOLDER-C', label: 'Small earthquake', kind: 'earthquake', expect: 'missed',
     description: 'Size is underestimated, just below the M 4.5 gate, so no alert is sent. An honest miss.',
-    lat: -0.65, lon: 100.55, depth: 12, M: 4.7, bearing: 135, patchDist: 4, seed: 21, spurious: 1,
+    lat: -0.65, lon: 100.55, depth: 12, M: 4.7, bearing: 135, patchDist: 4, seed: 20, spurious: 1,
   },
   {
     id: 'PLACEHOLDER-D', label: 'Footsteps', kind: 'noise', expect: 'rejected-2',
@@ -70,13 +71,13 @@ const SPECS = [
     lat: -7.80, lon: 110.30, footprint: 30, A0: 0.09, tOn: 0.4, sourceNear: 12, bearing: 90, seed: 5,
   },
   {
-    id: 'PLACEHOLDER-E', label: 'Machine / grinder', kind: 'noise', expect: 'rejected-4',
-    description: 'A grinder shakes a few nodes hard. It looks big, but most neighbours stay quiet.',
+    id: 'PLACEHOLDER-E', label: 'Machine / grinder', kind: 'noise', expect: 'rejected-2',
+    description: 'A grinder shakes the ground hard within about 200 m. With nodes 500 m apart only one node feels it, so the timing check never starts.',
     lat: -7.32, lon: 112.62, footprint: 400, A0: 0.45, decayM: 60, tOn: 0.3, sourceNear: 0, bearing: 90, seed: 2,
   },
   {
-    id: 'PLACEHOLDER-F', label: '500 m-wide shaking', kind: 'noise', expect: 'false-alarm',
-    description: 'Heavy shaking over a 500 m area (e.g. construction): locally it looks just like an earthquake.',
+    id: 'PLACEHOLDER-F', label: '500 m-wide shaking', kind: 'noise', expect: 'rejected-2',
+    description: 'Heavy shaking over a 500 m area (e.g. construction). With nodes 500 m apart only one node feels it, so it is stopped at the timing check.',
     lat: -8.62, lon: 116.25, footprint: 500, A0: 0.45, decayM: 60, tOn: 0.3, sourceNear: 0, bearing: 95, seed: 4,
   },
 ];
@@ -126,7 +127,7 @@ function simulate(spec) {
   for (let j = 0; j < GRID_N; j++) {
     for (let i = 0; i < GRID_N; i++) {
       const skip = rnd() < 0.03;
-      const jx = (rnd() - 0.5) * 50, jy = (rnd() - 0.5) * 50;
+      const jx = (rnd() - 0.5) * 2 * JITTER_M, jy = (rnd() - 0.5) * 2 * JITTER_M;
       const noise = NOISE_FLOOR_G * Math.exp(0.25 * gau());
       const site = Math.pow(10, 0.12 * gau());
       if (skip) continue;
@@ -292,7 +293,7 @@ function simulate(spec) {
     phases.push({
       phase: 4, t_s: T4, passed,
       reason: `O/E = ${O} / ${E.toFixed(1)} = ${ratio.toFixed(2)} (${passed ? '≥' : '<'} ${OE_GATE})`,
-      metrics: { expected_E: r2(E), observed_O: O, ratio: r2(ratio), silent_expected: silent },
+      metrics: { expected_E: r2(E), observed_O: O, ratio: r2(ratio), radius_m: Math.round(NB_RADIUS_KM * 1000), silent_expected: silent },
     });
     if (!passed) failed = true;
   }
@@ -360,7 +361,7 @@ function simulate(spec) {
     : { lat: spec.lat, lon: spec.lon, depth_km: 0, footprint_m: spec.footprint };
 
   const ev = {
-    id: spec.id, placeholder: true, label: spec.label, kind: spec.kind, description: spec.description,
+    id: spec.id, placeholder: true, label: spec.label, kind: spec.kind, description: spec.description, spacing_m: SPACING_M,
     source, wave_speeds: { p_kms: VP, s_kms: VS, detect: DETECT },
     patch: nodes.map((n) => ({ id: n.id, x_m: Math.round(n.x * 1000), y_m: Math.round(n.y * 1000) })),
     triggers: trig.map((t) => ({ node: t.n.id, t_s: r3(t.t), wave: t.wave })),
